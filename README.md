@@ -11,10 +11,11 @@ Eventually, we plan to expose the physics interface, and physics built on top of
 
 ## Core functionality
 The core library supports the following:
-    - Scalar/vector lagrange basis up to P2
-    - 1st and 2nd order 1D-3D meshes
-    - Global continuity helpers for the continuous-galerkin method.
-    - Gmsh input and VTU output
+
+- Scalar/vector lagrange basis up to P2
+- 1st and 2nd order 1D-3D meshes
+- Global continuity helpers for the continuous-galerkin method.
+- Gmsh input and VTU output
 
 the core library consists of the `src/fem` and `src/la` directories, these can be used independantly of the rest of the project.
 
@@ -22,10 +23,11 @@ Performance optimizations have yet to be implemented.
 
 ### Mesh Restrictions
 The gmsh parser expects the follwing:
-    - *All elements must have a physical group or they are ignored*
-    - Format in *version 2 binary*
-    - Well-behaved meshes (e.g. each face touches 2 cells or fewer)
-    - 3D meshes currently only support tetrahedrons
+
+- **All elements must have a physical group or they are ignored**
+- Format in **version 2 binary**
+- Well-behaved meshes (e.g. each face touches 2 cells or fewer)
+- 3D meshes currently only support tetrahedrons
 
 ## Application Layer
 The application layer is largely unfinished.
