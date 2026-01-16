@@ -327,7 +327,7 @@ gmsh_parse :: proc(
 					key := create_key({val})
 					assert(key in facet_entity_adjacency)
 					finder := facet_entity_adjacency[key]
-					mesh_element.adjacency[i] = finder.entity
+					mesh_element.adjacency[vert_index] = finder.entity
 					element_builder[finder.entity].adjacency[finder.facet_index] = fem.Entity_ID(i)
 				}
 				continue
