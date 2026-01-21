@@ -1,0 +1,23 @@
+mesh = "./meshes/expensive.msh"
+
+model = Conduction
+
+sections = {
+    beam = {
+        thermal_conductivity = 45
+    }
+}
+
+fields = {
+    temperature = {
+        order = Quadratic,
+        boundaries = {
+            "constraint" = {type = "isothermal", value = 100},
+            "free" = {type = "adiabatic"}
+        }
+    }
+}
+
+output = {
+    path = "results.vtu"
+}
