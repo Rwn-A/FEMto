@@ -194,6 +194,12 @@ compute_facet_normal :: proc(facet_element: Element_Type, facet_jacobian: Mat3, 
 	}
 }
 
+// works for 1d elements only.
+element_tangent :: proc(element: Element_Type, jacobian: Mat3) -> Vec3 {
+	assert(element_dim(element) == .D1)
+	return linalg.normalize(jacobian[0])
+}
+
 // Returns the determinant, or determinant-like quantity, from the given jacobian.
 // The jacobian must have been constructed from an element with dimension == `dim`.
 measure_from_jacobian :: proc(dim: Dimension, jacobian: Mat3) -> f64 {

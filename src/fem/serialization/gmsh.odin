@@ -157,6 +157,8 @@ gmsh_parse :: proc(
 
 	// physical names
 	mesh.boundary_names = make(map[string]fem.Boundary_ID)
+	mesh.section_names = make(map[string]fem.Section_ID)
+	names := make(map[string]struct{id: int, dim: fem.Dimension}, context.temp_allocator)
 	{
 		expect_ascii_line(&reader, "$PhysicalNames") or_return
 		num_groups := parse_int(read_ascii_line(&reader) or_return) or_return
@@ -174,11 +176,19 @@ gmsh_parse :: proc(
 			if group_dim > max_dimension {max_dimension = group_dim}
 
 			name := strings.clone(strings.trim(components[2], "\""))
-			mesh.boundary_names[name] = fem.Boundary_ID(parse_int(components[1]) or_return)
+			names[name] = {parse_int(components[1]) or_return, fem.Dimension(group_dim)}
 		}
 		expect_ascii_line(&reader, "$EndPhysicalNames") or_return
 
 		mesh.dim = fem.Dimension(max_dimension)
+
+		for key, value in names {
+			if value.dim < mesh.dim {
+				mesh.boundary_names[key] = fem.Boundary_ID(value.id)
+			}else{
+				mesh.section_names[key] = fem.Section_ID(value.id)
+			}
+		}
 	}
 
 	//nodes
@@ -306,7 +316,7 @@ gmsh_parse :: proc(
 		defer append(&element_builder, mesh_element)
 
 		mesh_element.type, mesh_element.order = gmsh_type_to_element_info(element.type)
-
+		mesh_element.section = fem.Section_ID(element.tags[0])
 		mesh_element.adjacency = make([]union {
 				fem.Boundary_ID,
 				fem.Entity_ID,

@@ -14,7 +14,7 @@ conduction :: proc(
 	mesh: fem.Mesh,
 	element_id: fem.Entity_ID,
 	temperature: Lagrange_Scalar_Field,
-	conductivity: f64,
+	conductivity: Material_Property,
 	weak_boundaries: map[fem.Boundary_ID]Variational_BC,
 	allocator := context.allocator,
 ) -> (la.Dense_Matrix, la.Vec) {
@@ -46,9 +46,8 @@ conduction :: proc(
 			test_grad := fem.basis_gradient(basis, &ctx, test)
 			for trial in 0 ..< basis.arity {
 				trial_grad := fem.basis_gradient(basis, &ctx, trial)
-				integrand := linalg.dot(test_grad, trial_grad) * conductivity * fem.dV(&ctx)
-				idx := la.dense_mat_idx(k, test, trial)
-				k.values[idx] += integrand
+				integrand := linalg.dot(test_grad, trial_grad) * conductivity.procedure(conductivity.data) * fem.dV(&ctx)
+				k.values[la.dense_mat_idx(k, test, trial)] += integrand
 			}
 		}
 	}
@@ -69,3 +68,6 @@ volumetric_flux :: proc(q: f64) -> Source {
 	return {transmute(rawptr)q, proc(data: rawptr) -> f64 {return transmute(f64)data}}
 }
 
+property_conductivity :: proc(k: f64) -> Material_Property {
+	return {transmute(rawptr)k, proc(data: rawptr) -> f64 {return transmute(f64)data}}
+}

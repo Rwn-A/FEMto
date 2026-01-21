@@ -7,11 +7,13 @@ package fem
 
 Boundary_ID :: distinct uint
 Entity_ID :: distinct u32 // just to cut down on peak memory in mesh storage.
+Section_ID :: distinct u32
 
 Mesh :: struct {
 	elements:                                      []Mesh_Element, // primary element in the mesh, lines in 1d, quads/tris in 2d etc.
 	num_vertices, num_edges, num_faces, num_cells: int,
 	boundary_names:                                map[string]Boundary_ID,
+	section_names:  							   map[string]Section_ID,
 	dim:                                           Dimension,
 }
 
@@ -22,6 +24,7 @@ Mesh_Element :: struct {
 		Boundary_ID,
 		Entity_ID,
 	},
+	section: Section_ID,
 	edge_orientation:      []bool,
 	face_orientation:      []u8,
 }

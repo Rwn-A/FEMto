@@ -29,21 +29,31 @@ Variational_BC :: struct {
 
 Source :: struct {
   data: rawptr,
-  procuedre: proc(data: rawptr) -> f64
+  procedure: proc(data: rawptr) -> f64
+}
+
+Material_Property :: struct {
+  data: rawptr,
+  procedure: proc(data: rawptr) -> f64
 }
 
 lagrange_scalar_field :: proc(
 	mesh: fem.Mesh,
 	order: fem.Order,
-	constrained_facets: map[fem.Boundary_ID]struct{},
+	constraints: map[fem.Boundary_ID]Constraint,
 	allocator := context.allocator,
 ) -> (
 	field: Lagrange_Scalar_Field,
 ) {
+	constrained_facets := make(map[fem.Boundary_ID]struct{})
+	for key, _ in constraints { constrained_facets[key] = {} }
 	field = Lagrange_Scalar_Field {
 		order  = .Linear,
 		layout = fem.create_layout(mesh, .CG, fem.Lagrange_Scalar, order, constrained_facets, allocator),
 	}
+
+	field_update_constraint_values(mesh, field, constraints)
+
 	return field
 }
 
@@ -113,7 +123,7 @@ field_visualizer :: proc {
 	lagrange_vector_field_visualizer,
 }
 
-field_set_constraints :: proc(mesh: fem.Mesh, field: $T, constraints: map[fem.Boundary_ID]Constraint) {
+field_update_constraint_values :: proc(mesh: fem.Mesh, field: $T, constraints: map[fem.Boundary_ID]Constraint) {
 	for element, id in mesh.elements {
 		basis := field_basis(field, element)
 		for adjacency, facet_index in element.adjacency {

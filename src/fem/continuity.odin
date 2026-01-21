@@ -182,7 +182,7 @@ scatter_local :: proc(element: Entity_ID, M: la.Sparse_Matrix, F: la.Vec, m: la.
 	}
 }
 
-system_finalize_constraints :: proc(M: la.Sparse_Matrix, F: la.Vec, test: DOF_Layout) {
+system_respect_constraints :: proc(M: la.Sparse_Matrix, F: la.Vec, test: DOF_Layout) {
 	for coeff, i in test.coeffs {
 		if !test.constrained[i] {continue}
 		la.sparse_mat_zero_row(M, i)
