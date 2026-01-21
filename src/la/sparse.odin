@@ -5,6 +5,8 @@
 */
 package la
 
+import "core:slice"
+
 // TODO: simd or even threaded maybe spmv.
 
 // Sparsity pattern represents which columns, in which rows, might be non-zero.
@@ -28,6 +30,10 @@ sparse_mat_from_sparsity :: proc(sparsity: Sparsity, allocator := context.alloca
 sparse_mat_destroy :: #force_inline proc(mat: Sparse_Matrix, allocator := context.allocator) {delete(mat.values, allocator)}
 
 sparse_mat_rows :: #force_inline proc(sparsity: Sparsity) -> int {return len(sparsity.row_ptrs) - 1}
+
+sparse_mat_zero_row :: proc(mat: Sparse_Matrix, row: int) {
+	slice.zero(mat.values[mat.row_ptrs[row]:mat.row_ptrs[row+1]])
+}
 
 // Specific value index
 sparse_mat_idx :: proc(sp: Sparsity, row, col: int) -> int {

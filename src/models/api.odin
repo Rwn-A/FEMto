@@ -12,7 +12,6 @@ import "../la"
 
 Lagrange_Scalar_Field :: struct {
 	using layout:        fem.DOF_Layout,
-	current_constraints: []bool,
 	order:               fem.Order,
 }
 
@@ -28,33 +27,38 @@ Variational_BC :: struct {
 	procedure: proc(data: rawptr) -> f64,
 }
 
+Source :: struct {
+  data: rawptr,
+  procuedre: proc(data: rawptr) -> f64
+}
+
 lagrange_scalar_field :: proc(
 	mesh: fem.Mesh,
 	order: fem.Order,
+	constrained_facets: map[fem.Boundary_ID]struct{},
 	allocator := context.allocator,
 ) -> (
 	field: Lagrange_Scalar_Field,
 ) {
 	field = Lagrange_Scalar_Field {
 		order  = .Linear,
-		layout = fem.create_layout(mesh, .CG, fem.Lagrange_Scalar, order, allocator),
+		layout = fem.create_layout(mesh, .CG, fem.Lagrange_Scalar, order, constrained_facets, allocator),
 	}
-	field.current_constraints = make([]bool, len(field.coeffs), allocator)
 	return field
 }
 
 lagrange_vector_field :: proc(
 	mesh: fem.Mesh,
 	order: fem.Order,
+	constrained_facets: map[fem.Boundary_ID]struct{},
 	allocator := context.allocator,
 ) -> (
 	field: Lagrange_Vector_Field,
 ) {
 	field = Lagrange_Vector_Field {
 		order  = .Linear,
-		layout = fem.create_layout(mesh, .CG, fem.Lagrange_Vector, order, allocator),
+		layout = fem.create_layout(mesh, .CG, fem.Lagrange_Vector, order, constrained_facets, allocator),
 	}
-	field.current_constraints = make([]bool, len(field.coeffs), allocator)
 	return field
 }
 
@@ -109,22 +113,16 @@ field_visualizer :: proc {
 	lagrange_vector_field_visualizer,
 }
 
-field_discover_constraints :: proc(mesh: fem.Mesh, field: $T, constraints: map[fem.Boundary_ID]Constraint) {
-	assert(len(field.coeffs) == len(field.current_constraints))
+field_set_constraints :: proc(mesh: fem.Mesh, field: $T, constraints: map[fem.Boundary_ID]Constraint) {
 	for element, id in mesh.elements {
 		basis := field_basis(field, element)
 		for adjacency, facet_index in element.adjacency {
 			if bnd_id, ok := adjacency.(fem.Boundary_ID); ok {
 				constraint := constraints[bnd_id] or_continue
 				for basis_index in 0 ..< basis.arity {
-					s := fem.basis_support(basis, basis_index)
-					is_constrained := fem.element_entity_on_facet(element.type, facet_index, s.entity_dim, s.entity_index)
-					// a dof shared between a free and constrained face is considered constrained
-					if is_constrained {
-						global_index := field.mapping[id][basis_index]
-						field.current_constraints[global_index] = is_constrained
-						field.coeffs[global_index] = constraint.procedure(constraint.data)
-					}
+					global_index := field.mapping[id][basis_index]
+					if !field.constrained[global_index] {continue}
+					field.coeffs[global_index] = constraint.procedure(constraint.data)
 				}
 			}
 		}

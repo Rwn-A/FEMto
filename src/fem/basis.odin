@@ -30,8 +30,22 @@ basis_create :: proc($T: typeid, element: Element, order: Order) -> (basis: T) {
 	}
 }
 
+
 basis_ls_gradient :: proc(ls: Lagrange_Scalar, ctx: ^Sample_Context, basis: int) -> Vec3 {
 	return ls.reference[ctx.s.group].gradients[ctx.s.index][basis] * sample_pullback(ctx)
+}
+
+basis_lv_gradient :: proc(ls: Lagrange_Scalar, ctx: ^Sample_Context, basis: int) -> (m: Mat3) {
+	scalar_basis := basis / AMBIENT_DIM
+    comp := basis % AMBIENT_DIM
+
+    g := basis_ls_gradient(ls, ctx, scalar_basis)
+
+    m[0, comp] = g[0]
+    m[1, comp] = g[1]
+    m[2, comp] = g[2]
+
+    return m
 }
 
 basis_gradient :: proc {

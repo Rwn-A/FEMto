@@ -24,6 +24,14 @@ Dense_LU_Factorized :: struct {
 	pivots: []i16,
 }
 
+dense_create :: proc(#any_int rows, cols: i32, allocator := context.allocator) -> Dense_Matrix {
+	return {
+		rows = rows,
+		columns = cols,
+		values = make([^]f64, rows * cols, allocator)
+	}
+}
+
 dense_mat_idx :: #force_inline proc(mat: Dense_Matrix, #any_int row, col: i32) -> int {
 	assert(row < mat.rows && col < mat.columns)
 	return int(col * mat.rows + row)

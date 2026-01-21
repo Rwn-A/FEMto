@@ -14,6 +14,7 @@ import "core:log"
 DOF_Layout :: struct {
 	coeffs:  []f64,
 	mapping: [][]int,
+	constrained: []bool,
 }
 
 Continuity_Method :: enum {
@@ -29,6 +30,7 @@ create_layout :: proc(
 	method: Continuity_Method,
 	$basis_type: typeid,
 	order: Order,
+	constrained_facets: map[Boundary_ID]struct{},
 	allocator := context.allocator,
 	temp_allocator := context.temp_allocator,
 ) -> (
@@ -102,6 +104,25 @@ create_layout :: proc(
 	}
 
 	layout.coeffs = make([]f64, next_global)
+	layout.constrained = make([]bool, next_global)
+
+	for element, element_idx in mesh.elements {
+		basis := basis_create(basis_type, element, order)
+		for adjacency, facet_index in element.adjacency {
+			if bnd_id, ok := adjacency.(Boundary_ID); ok {
+				if bnd_id not_in constrained_facets { continue }
+				for basis_index in 0 ..< basis.arity {
+					s := basis_support(basis, basis_index)
+					is_constrained := element_entity_on_facet(element.type, facet_index, s.entity_dim, s.entity_index)
+					// a dof shared between a free and constrained face is considered constrained
+					if is_constrained {
+						global_index := layout.mapping[element_idx][basis_index]
+						layout.constrained[global_index] = is_constrained
+					}
+				}
+			}
+		}
+	}
 
 	return layout
 }
@@ -143,6 +164,32 @@ create_sparsity_from_layout :: proc(mesh: Mesh, test, trial: DOF_Layout, allocat
 	return sp
 }
 
+
+scatter_local :: proc(element: Entity_ID, M: la.Sparse_Matrix, F: la.Vec, m: la.Dense_Matrix, f: la.Vec, test, trial: DOF_Layout) {
+	for loc_test in 0..<m.rows {
+		glob_test := test.mapping[element][loc_test]
+		if test.constrained[glob_test] { continue }
+		F[glob_test] += f[loc_test]
+		for loc_trial in 0..<m.columns {
+			mat_entry := m.values[la.dense_mat_idx(m, loc_test, loc_trial)]
+			glob_trial := trial.mapping[element][loc_trial]
+			if trial.constrained[glob_trial] {
+				F[glob_test] -= mat_entry * trial.coeffs[glob_trial]
+			} else{
+				M.values[la.sparse_mat_idx(M, glob_test, glob_trial)] += mat_entry
+			}
+		}
+	}
+}
+
+system_finalize_constraints :: proc(M: la.Sparse_Matrix, F: la.Vec, test: DOF_Layout) {
+	for coeff, i in test.coeffs {
+		if !test.constrained[i] {continue}
+		la.sparse_mat_zero_row(M, i)
+		M.values[la.sparse_mat_idx(M, i, i)] = 1
+		F[i] = test.coeffs[i]
+	}
+}
 
 // returns the cannonical element-sub-entity-local index of a basis.
 // so if an edge has 2 basis, say basis 3, and basis 4. basis 3 is the edges 0th basis and 4 is its 1st.
