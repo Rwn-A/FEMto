@@ -260,3 +260,37 @@ write_vtu :: proc(
 
 	return nil
 }
+
+write_pvd :: proc(path: string, vtk_files: []string, times: []f64) -> os2.Error {
+	xml_w: XML_Writer
+	fd := os2.open(path, {.Read, .Write, .Create, .Trunc}) or_return
+	defer os2.close(fd)
+
+	xml_w.w = io.to_writer(os2.to_writer(fd))
+
+	fmt.wprintln(xml_w.w, "<?xml version=\"1.0\"?>")
+
+	xml_open_tag(
+		&xml_w,
+		.VTKFile,
+		{{"type", "Collection"}, {"version", "0.1"}, {"byte_order", "LittleEndian"}},
+	)
+	defer xml_close_tag(&xml_w)
+
+	xml_open_tag(&xml_w, .Collection)
+	defer xml_close_tag(&xml_w)
+
+	for entry in soa_zip(vtk_file = vtk_files, time = times) {
+		b: [32]u8
+		time_str := strconv.write_float(b[:], entry.time, 'f', 8, 64)
+		xml_open_tag(
+			&xml_w,
+			.DataSet,
+			{{"timestep", time_str}, {"group", ""}, {"part", "0"}, {"file", entry.vtk_file}},
+		)
+		xml_close_tag(&xml_w)
+	}
+
+	return nil
+
+}

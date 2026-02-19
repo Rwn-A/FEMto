@@ -8,6 +8,7 @@ import "../la"
 import fio "../serialization"
 import "core:log"
 import "core:path/filepath"
+import "core:strings"
 
 import "core:fmt"
 import "core:os/os2"
@@ -94,10 +95,16 @@ Model :: struct {
 solve_model :: proc(config: Solver_Config, model: ^Model, mesh: fem.Mesh) -> Solve_Result {
 	ca := infra.Checkpoint_Allocator{}
 
+	// this needs to use previous allocator so its not wiped on a reset.
+	pvd_paths := make([dynamic]string)
+	pvd_times := make([dynamic]f64)
+	defer delete(pvd_paths)
+	defer delete(pvd_times)
+
 	infra.ca_init(&ca)
 	defer infra.ca_deinit(&ca)
 
-
+	perm_alloc := context.allocator
 	context.allocator = infra.ca_allocator(&ca)
 
 	// setup output
@@ -114,6 +121,7 @@ solve_model :: proc(config: Solver_Config, model: ^Model, mesh: fem.Mesh) -> Sol
 	R := fem.layout_make_vec(&layout) // working residual vector
 	J := fem.layout_make_matrix(&layout) // working jacobian matrix
 	du := fem.layout_make_vec(&layout) // incremental update to u
+
 
 	// time loop
 	tc := config.tc
@@ -195,6 +203,11 @@ solve_model :: proc(config: Solver_Config, model: ^Model, mesh: fem.Mesh) -> Sol
 
 			fio.write_vtu(path, mesh, viz_mesh, output_field_buffer[:])
 
+			if tc.is_transient {
+				append(&pvd_paths, strings.clone(path, perm_alloc))
+				append(&pvd_times, tc.current_time)
+			}
+
 		}
 		copy(u_prev.values, u_k.values)
 
@@ -202,6 +215,12 @@ solve_model :: proc(config: Solver_Config, model: ^Model, mesh: fem.Mesh) -> Sol
 		if tc.current_time >= tc.end_time || !tc.is_transient {
 			break
 		}
+	}
+
+	if tc.is_transient {
+		filename := fmt.aprintf("%s.pvd", config.output.prefix)
+		path, _ := os2.join_path({config.output.output_dir, filename}, context.allocator)
+		fio.write_pvd(path, pvd_paths[:], pvd_times[:])
 	}
 
 	return {converged = true}
