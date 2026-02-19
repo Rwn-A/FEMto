@@ -1,122 +1,83 @@
 // SPDX-FileCopyrightText: 2026 Rowan Apps, Tor Rabien
 // SPDX-License-Identifier: MIT
-/*
-Basis function definitions and interface.
-
-Compile-time dispatch for now, possible changes down the road.
-*/
 package fem
 
+Basis_LS :: struct {
+	using info: Basis_Info,
+}
+Basis_LV :: distinct Basis_LS
 
-Basis_Support :: struct {
-	entity_dim:                                           Dimension,
-	entity_index, entity_basis_index, entity_basis_arity: int,
+ls_create :: proc(element: Element, order: Order) -> Basis_LS {
+	raw := RAW_LAGRANGE_BASIS[element.type][order]
+	return {order = order, _support = raw.support, arity = raw.arity, geometry_required = {.Jac_Inv}, components = 1}
 }
 
-Lagrange_Scalar :: struct {
-	support:   []Basis_Support,
-	reference: [Sample_Group]Lagrange_Reference_Table,
-	arity:     int,
+lv_create :: proc(element: Element, order: Order) -> Basis_LV {
+	ls := ls_create(element, order)
+	ls.components = AMBIENT_DIM
+	ls.arity = ls.arity * ls.components
+	return cast(Basis_LV)ls
 }
 
-Lagrange_Vector :: distinct Lagrange_Scalar
-
-basis_create :: proc($T: typeid, element: Element, order: Order) -> (basis: T) {
-	when T == Lagrange_Scalar || T == Lagrange_Vector {
-		raw := RAW_LAGRANGE_BASIS[element.type][order]
-		return {support = raw.support, arity = raw.arity, reference = LAGRANGE_REFERENCE_TABLES[element.type][order]}
-	} else {
-		#panic("Type T is not a valid basis type.")
-	}
+ls_value :: proc(ls: Basis_LS, ctx: Element_Context, point, basis: int) -> f64 {
+	return ctx.basis_lagrange_table[ls.order].values[point][basis]
 }
 
-
-basis_ls_gradient :: proc(ls: Lagrange_Scalar, ctx: ^Sample_Context, basis: int) -> Vec3 {
-	return ls.reference[ctx.s.group].gradients[ctx.s.index][basis] * sample_pullback(ctx)
+ls_gradient :: proc(ls: Basis_LS, ctx: Element_Context, point, basis: int) -> Vec3 {
+	return ctx.basis_lagrange_table[ls.order].gradients[point][basis] * ctx_inverse_jacobian(ctx, point)
 }
 
-basis_lv_gradient :: proc(ls: Lagrange_Scalar, ctx: ^Sample_Context, basis: int) -> (m: Mat3) {
-	scalar_basis := basis / AMBIENT_DIM
-    comp := basis % AMBIENT_DIM
-
-    g := basis_ls_gradient(ls, ctx, scalar_basis)
-
-    m[0, comp] = g[0]
-    m[1, comp] = g[1]
-    m[2, comp] = g[2]
-
-    return m
-}
-
-basis_gradient :: proc {
-	basis_ls_gradient,
-}
-
-basis_ls_value :: proc(ls: Lagrange_Scalar, ctx: ^Sample_Context, basis: int) -> f64 {
-	return ls.reference[ctx.s.group].values[ctx.s.index][basis]
-}
-
-basis_lv_value :: proc(lv: Lagrange_Vector, ctx: ^Sample_Context, basis: int) -> (r: Vec3) {
-	r[basis % AMBIENT_DIM] = lv.reference[ctx.s.group].values[ctx.s.index][basis / AMBIENT_DIM]
+lv_value :: proc(lv: Basis_LV, ctx: Element_Context, point, basis: int) -> (r: Vec3) {
+	sb, cmpnt := basis_decompose_component(lv, basis)
+	r[cmpnt] = ctx.basis_lagrange_table[lv.order].values[point][sb]
 	return r
 }
 
-basis_value :: proc {
-	basis_ls_value,
-	basis_lv_value,
+lv_gradient :: proc(lv: Basis_LV, ctx: Element_Context, point, basis: int) -> (m: Mat3) {
+	sb, cmpnt := basis_decompose_component(lv, basis)
+
+	g := ls_gradient(cast(Basis_LS)lv, ctx, point, basis)
+
+	m[0, cmpnt] = g[0]
+	m[1, cmpnt] = g[1]
+	m[2, cmpnt] = g[2]
+
+	return m
 }
 
-
-basis_ls_support :: proc(ls: Lagrange_Scalar, basis: int) -> Basis_Support {
-	return ls.support[basis]
-}
-
-basis_lv_support :: proc(lv: Lagrange_Vector, basis: int) -> Basis_Support {
-	scalar_support := lv.support[basis / AMBIENT_DIM]
-	scalar_support.entity_basis_index = (scalar_support.entity_basis_index * AMBIENT_DIM) + (basis % AMBIENT_DIM)
-	scalar_support.entity_basis_arity *= AMBIENT_DIM
-	return scalar_support
-}
-
-basis_support :: proc {
-	basis_ls_support,
-	basis_lv_support,
-}
-
-
-Lagrange_Reference_Table :: struct {
+// precomputed in ref space available to element context.
+// indexed via point, basis index.
+Lagrange_Context_Table :: struct {
 	values:    [][]f64,
 	gradients: [][]Vec3,
 }
 
-// filled at startup.
-LAGRANGE_REFERENCE_TABLES := [Element_Type][Order][Sample_Group]Lagrange_Reference_Table{}
+@(private)
+populate_lagrange_context_table :: proc(
+	element_type: Element_Type,
+	points: []Vec3,
+	allocator := context.allocator,
+) -> (
+	table: [Order]Lagrange_Context_Table,
+) {
+	for order in Order {
+		basis := RAW_LAGRANGE_BASIS[element_type][order]
+		table[order].values = make([][]f64, len(points))
+		table[order].gradients = make([][]Vec3, len(points))
 
-
-populate_basis_tables :: proc(allocator := context.allocator) {
-	context.allocator = allocator
-	for type in Element_Type {
-		for order in Order {
-			basis := RAW_LAGRANGE_BASIS[type][order]
-			for ps, ps_id in SAMPLE_POINTS[type] {
-				table := &LAGRANGE_REFERENCE_TABLES[type][order][ps_id]
-				table.values = make([][]f64, len(ps))
-				table.gradients = make([][]Vec3, len(ps))
-				for point, point_idx in ps {
-					table.values[point_idx] = make([]f64, basis.arity)
-					table.gradients[point_idx] = make([]Vec3, basis.arity)
-					for basis_index in 0 ..< basis.arity {
-						val, grad := basis.reference_data(basis_index, point)
-						table.values[point_idx][basis_index] = val
-						table.gradients[point_idx][basis_index] = grad
-					}
-				}
+		for point, point_idx in points {
+			table[order].values[point_idx] = make([]f64, basis.arity)
+			table[order].gradients[point_idx] = make([]Vec3, basis.arity)
+			for basis_index in 0 ..< basis.arity {
+				val, grad := basis.reference_data(basis_index, point)
+				table[order].values[point_idx][basis_index] = val
+				table[order].gradients[point_idx][basis_index] = grad
 			}
 		}
 	}
+	return table
 }
 
-// raw basis
 
 Raw_Lagrange_Info :: struct {
 	support:        []Basis_Support,
@@ -132,14 +93,12 @@ RAW_LAGRANGE_BASIS := [Element_Type][Order]Raw_Lagrange_Info {
 	.Tetrahedron   = LAGRANGE_TET_BASIS,
 }
 
-// Use for evalauting scalar lagrange basis at non-sample points.
-raw_shape_value :: proc(type: Element_Type, order: Order, idx: int, ref_point: Vec3) -> f64 {
+raw_lagrange_value :: proc(type: Element_Type, order: Order, idx: int, ref_point: Vec3) -> f64 {
 	v, _ := RAW_LAGRANGE_BASIS[type][order].reference_data(idx, ref_point)
 	return v
 }
 
-// Use for evalauting scalar lagrange basis at non-sample points.
-raw_shape_gradient :: proc(type: Element_Type, order: Order, idx: int, ref_point: Vec3) -> Vec3 {
+raw_lagrange_gradient :: proc(type: Element_Type, order: Order, idx: int, ref_point: Vec3) -> Vec3 {
 	_, g := RAW_LAGRANGE_BASIS[type][order].reference_data(idx, ref_point)
 	return g
 }

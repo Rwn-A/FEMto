@@ -1,73 +1,120 @@
-// SPDX-FileCopyrightText: 2026 Rowan Apps, Tor Rabien
-// SPDX-License-Identifier: MIT
 package models
 
-import "core:log"
+
+import "core:mem"
 import "core:math/linalg"
 
-import "../fem"
+import fem"../fe_core"
 import "../la"
+import fio"../serialization"
 
-import "core:time"
+import "core:slice"
 
-conduction :: proc(
-	mesh: fem.Mesh,
-	element_id: fem.Entity_ID,
-	temperature: Lagrange_Scalar_Field,
-	conductivity: Material_Property,
-	weak_boundaries: map[fem.Boundary_ID]Variational_BC,
-	allocator := context.allocator,
-) -> (la.Dense_Matrix, la.Vec) {
-	element := mesh.elements[element_id]
+Conduction_Params :: struct {
+    soln_order: fem.Order,
+    isothermal_bnds: map[fem.Boundary_ID]f64,
 
-	basis := field_basis(temperature, element)
-	si, ctx := fem.sample_context_create(mesh, fem.Entity_ID(element_id))
-
-	k := la.dense_create(basis.arity, basis.arity, allocator)
-	f := make(la.Vec, basis.arity, allocator)
-
-	// weak bcs
-	mask := fem.create_interface_facet_filter(element)
-	for fem.iterate_facet_sample_group(&si, &ctx, .Facet_Integration_3, mask) {
-		bound_id := element.adjacency[ctx.fs.facet_index].(fem.Boundary_ID)
-		if bound_id not_in weak_boundaries {continue}
-		for test in 0 ..< basis.arity {
-			term := weak_boundaries[bound_id]
-			res := term.procedure(term.data) * fem.dS(&ctx) * fem.basis_value(basis, &ctx, test)
-			f[test] += res
-		}
-	}
-
-	fem.sample_iterator_reset(&si)
-
-	// volume terms
-	for fem.iterate_sample_group(&si, &ctx, .Integration_3) {
-		for test in 0 ..< basis.arity {
-			test_grad := fem.basis_gradient(basis, &ctx, test)
-			for trial in 0 ..< basis.arity {
-				trial_grad := fem.basis_gradient(basis, &ctx, trial)
-				integrand := linalg.dot(test_grad, trial_grad) * conductivity.procedure(conductivity.data) * fem.dV(&ctx)
-				k.values[la.dense_mat_idx(k, test, trial)] += integrand
-			}
-		}
-	}
-
-	return k, f
+    // state.
+    temp_fh: fem.Field_Handle,
 }
 
+model_conduction :: proc(p: ^Conduction_Params) -> Model {
+    define_layout :: proc(m: ^Model, mesh: fem.Mesh, allocator: mem.Allocator) -> (fem.Layout, fem.Constraint_Mask) {
+        params := cast(^Conduction_Params)m.data
+        context.allocator = allocator
 
-isothermal :: proc(T: f64) -> Constraint {
-	return {transmute(rawptr)T, proc(data: rawptr) -> f64 {return transmute(f64)data}}
-}
+        temp_fd := fem.Field_Descriptor{.LS, params.soln_order}
 
-fixed_flux :: proc(q: f64) -> Variational_BC {
-	return {transmute(rawptr)q, proc(data: rawptr) -> f64 {return transmute(f64)data}}
-}
+        layout := fem.layout_create(allocator)
 
-volumetric_flux :: proc(q: f64) -> Source {
-	return {transmute(rawptr)q, proc(data: rawptr) -> f64 {return transmute(f64)data}}
-}
+        params.temp_fh = fem.layout_add_field(&layout, mesh, temp_fd)
+        fem.layout_couple(&layout, mesh, params.temp_fh, params.temp_fh)
 
-property_conductivity :: proc(k: f64) -> Material_Property {
-	return {transmute(rawptr)k, proc(data: rawptr) -> f64 {return transmute(f64)data}}
+        cm := fem.layout_make_empty_constraint_mask(&layout)
+
+        iso_bnds, _ := slice.map_keys(params.isothermal_bnds)
+        defer delete(iso_bnds)
+
+        field_mark_constraints(mesh, layout, cm, params.temp_fh, iso_bnds)
+
+        return layout, cm
+    }
+
+    respect_constraints :: proc(
+         m: ^Model,
+         layout: fem.Layout,
+         mesh: fem.Mesh,
+         mask: fem.Constraint_Mask,
+         current_iterate: la.Block_Vector,
+         tc: Time_Context,
+         allocator: mem.Allocator
+    ) {
+        params := cast(^Conduction_Params)m.data
+
+        context.allocator = allocator
+
+        for id, dofs in layout.bound_maps[params.temp_fh] {
+            iso_bound := params.isothermal_bnds[id] or_continue
+            for d in dofs {
+                global := fem.layout_global_pos(layout, params.temp_fh, d.element, d.local)
+                current_iterate.values[global] = iso_bound
+            }
+        }
+    }
+
+    build_local_problem :: proc(
+        m: ^Model,
+        layout: fem.Layout,
+        element: fem.Mesh_Element,
+        current_iterate: la.Block_Vector,
+        tc: Time_Context,
+        R: la.Block_Vector,
+        J: la.Block_Dense_Matrix,
+        allocator: mem.Allocator,
+    ) {
+        params := cast(^Conduction_Params)m.data
+        context.allocator = allocator
+
+        basis := fem.basis_create(fem.Basis_LS, element, params.soln_order)
+
+        quad, count := fem.quadrature_for(
+            element,
+            fem.infer_quadrature_rule(element, params.soln_order, .Interior),
+            basis.geometry_required
+        )
+
+    	for qp in 0 ..< count {
+            for test in 0..<basis.arity {
+                grad_v := fem.basis_gradient(basis, quad, qp, test)
+                for trial in 0..<basis.arity {
+                    grad_u := fem.basis_gradient(basis, quad, qp, trial)
+
+                    J_ij := linalg.dot(grad_u, grad_v) * 10 * fem.dV(quad, qp)
+                    u_j := field_coeff(layout, params.temp_fh, current_iterate, element.id, trial)
+
+                    R.values[la.idx(R, int(params.temp_fh), test)] += -J_ij * u_j
+                    J.values[la.idx(J, int(params.temp_fh), int(params.temp_fh), test, trial)] += J_ij
+                }
+            }
+    	}
+    }
+
+    output_fields :: proc(
+        m: ^Model,
+        layout: fem.Layout,
+        current_iterate: la.Block_Vector,
+        output_fields: ^[dynamic]fio.Output_Field,
+    ) {
+        params := cast(^Conduction_Params)m.data
+        append(output_fields, field_to_output_field(layout, params.temp_fh, current_iterate, "Temperature"))
+    }
+
+    return Model {
+        data = p,
+        define_layout = define_layout,
+        respect_constraints = respect_constraints,
+        build_local_problem = build_local_problem,
+        output_fields = output_fields,
+    }
+
 }

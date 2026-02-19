@@ -12,19 +12,16 @@
  NOTES:
   - The term "facet" is used to describe the face of an element in any dimension.
     A line on a 2d mesh, or a point on a 1d mesh.
-
- SUPPORT:
-  - Common element types at linear and quadratic order.
 */
 package fem
 
-import "core:log"
 import "core:math/linalg"
 import "core:slice"
 
 Vec3 :: linalg.Vector3f64
 Mat3 :: linalg.Matrix3x3f64
 
+// This is here to avoid magic numbers, it is not a knob one can configure.
 AMBIENT_DIM :: 3
 
 Element_Type :: enum u8 {
@@ -55,6 +52,7 @@ Element :: struct {
 	nodes:  []Vec3,
 }
 
+// Not all of these fields may be meaningful, for example points have no facet, lines have no facet tangents etc.
 Reference_Element :: struct {
 	dimension:           Dimension,
 	sub_entity_nodes:    [Order][Dimension][][]int,
@@ -102,12 +100,11 @@ element_facet_dim :: #force_inline proc(parent_type: Element_Type) -> Dimension 
 }
 
 element_facet_tangents :: #force_inline proc(parent_type: Element_Type, facet: int) -> []Vec3 {
-	assert(parent_type != .Point)
+	assert(parent_type != .Point && parent_type != .Line)
 	return REFERENCE_ELEMENTS[parent_type].facet_tangents[facet]
 }
 
-// used by visualization code to get rid of some issues when splitting higher-order cells
-// into many smaller linear sub cells.
+// Functions that act on the `reduced` element will ignore any curvature.
 element_reduce_to_linear :: proc(element: Element) -> (reduced: Element) {
 	reduced = element
 	reduced.order = .Linear
@@ -118,9 +115,15 @@ element_reduce_to_linear :: proc(element: Element) -> (reduced: Element) {
 // This query currently does not have enough table information to be a quick lookup.
 // It is expected to be used outside of hot paths, for sparsity pattern generation or similar.
 // If perf becomes an issue, this logic can be fully, or partially moved into reference element tables.
-element_entity_on_facet :: proc(parent_type: Element_Type, facet: int, entity_dim: Dimension, entity_index: int) -> bool {
+element_entity_on_facet :: proc(
+	parent_type: Element_Type,
+	facet: int,
+	entity_dim: Dimension,
+	entity_index: int,
+	loc := #caller_location,
+) -> bool {
 	assert(parent_type != .Point)
-	assert(entity_dim <= element_facet_dim(parent_type))
+	assert(entity_dim <= element_facet_dim(parent_type), loc = loc)
 
 	facet_nodes := element_sub_entity_nodes(parent_type, .Linear, element_facet_dim(parent_type))[facet]
 	entity_nodes := element_sub_entity_nodes(parent_type, .Linear, entity_dim)[entity_index]
@@ -137,15 +140,15 @@ element_entity_on_facet :: proc(parent_type: Element_Type, facet: int, entity_di
 // Maps a reference point to a physical location.
 compute_physical_point :: proc(element: Element, ref_point: Vec3) -> (p: Vec3) {
 	for node, idx in element.nodes {
-		p += node * raw_shape_value(element.type, element.order, idx, ref_point)
+		p += node * raw_lagrange_value(element.type, element.order, idx, ref_point)
 	}
 	return p
 }
 
-// Same as above, prefer this one if sample is known.
-compute_physical_point_sample :: proc(element: Element, s: Sample) -> (p: Vec3) {
-	for node, idx in element.nodes {
-		val := LAGRANGE_REFERENCE_TABLES[element.type][element.order][s.group].values[s.index][idx]
+// Same as above, prefer this one if context is present.
+compute_physical_point_context :: proc(ctx: Element_Context, point: int) -> (p: Vec3) {
+	for node, basis_idx in ctx.element.nodes {
+		val := ctx.basis_lagrange_table[ctx.element.order].values[point][basis_idx]
 		p += val * node
 	}
 	return p
@@ -154,15 +157,15 @@ compute_physical_point_sample :: proc(element: Element, s: Sample) -> (p: Vec3) 
 // Computes the jacobian which is the "derivative" of coordinate transform at some reference point
 compute_jacobian :: proc(element: Element, ref_point: Vec3) -> (j: Mat3) {
 	for node, idx in element.nodes {
-		j += linalg.outer_product(node, raw_shape_gradient(element.type, element.order, idx, ref_point))
+		j += linalg.outer_product(node, raw_lagrange_gradient(element.type, element.order, idx, ref_point))
 	}
 	return j
 }
 
 // Same as above, prefer if sample is known.
-compute_jacobian_sample :: proc(element: Element, s: Sample) -> (j: Mat3) {
-	for node, idx in element.nodes {
-		grad := LAGRANGE_REFERENCE_TABLES[element.type][element.order][s.group].gradients[s.index][idx]
+compute_jacobian_context :: proc(ctx: Element_Context, point: int) -> (j: Mat3) {
+	for node, basis_idx in ctx.element.nodes {
+		grad := ctx.basis_lagrange_table[ctx.element.order].gradients[point][basis_idx]
 		j += linalg.outer_product(node, grad)
 	}
 	return j
@@ -175,7 +178,10 @@ compute_facet_jacobian :: proc(element: Element, parent_jacobian: Mat3, facet: i
 }
 
 // Returns an outward normal of a given facet, requires both the facet and parent jacobians.
-compute_facet_normal :: proc(facet_element: Element_Type, facet_jacobian: Mat3, parent_jacobian: Mat3) -> Vec3 {
+// The "normal" in this case, is the vector that points from one element into another. In 1D it so happens
+// to actually be the vector tangent to the line, in 2D it is still within the local plane of the element.
+// in 1D, on graph meshes, there is no concept of a normal, and this function cannot be used.
+facet_normal_from_jacobian :: proc(facet_element: Element_Type, facet_jacobian: Mat3, parent_jacobian: Mat3) -> Vec3 {
 	assert(element_dim(facet_element) != .D3)
 	switch element_dim(facet_element) {
 	case .D0:
@@ -194,15 +200,9 @@ compute_facet_normal :: proc(facet_element: Element_Type, facet_jacobian: Mat3, 
 	}
 }
 
-// works for 1d elements only.
-element_tangent :: proc(element: Element_Type, jacobian: Mat3) -> Vec3 {
-	assert(element_dim(element) == .D1)
-	return linalg.normalize(jacobian[0])
-}
-
 // Returns the determinant, or determinant-like quantity, from the given jacobian.
 // The jacobian must have been constructed from an element with dimension == `dim`.
-measure_from_jacobian :: proc(dim: Dimension, jacobian: Mat3) -> f64 {
+determinant_from_jacobian :: proc(dim: Dimension, jacobian: Mat3) -> f64 {
 	switch dim {
 	case .D0:
 		return 1
@@ -219,7 +219,7 @@ measure_from_jacobian :: proc(dim: Dimension, jacobian: Mat3) -> f64 {
 
 // Returns the inverse, or inverse-like quantity from the given jacobian.
 // The jacobian must have been constructed from an element with dimension == `dim`.
-pullback_from_jacobian :: proc(dim: Dimension, jacobian: Mat3) -> (transform: Mat3) {
+inverse_from_jacobian :: proc(dim: Dimension, jacobian: Mat3) -> (transform: Mat3) {
 	switch dim {
 	case .D0:
 		return {}
@@ -241,6 +241,61 @@ pullback_from_jacobian :: proc(dim: Dimension, jacobian: Mat3) -> (transform: Ma
 		return linalg.transpose(transform)
 	case .D3:
 		return linalg.transpose(linalg.inverse(jacobian))
+	case:
+		unreachable()
+	}
+}
+
+// Only sensible for a jacobian from a line element.
+line_tangent_from_jacobian :: proc(jacobian: Mat3) -> Vec3 {
+	return linalg.normalize(jacobian[0])
+}
+
+// Moves a point from the facets reference space, to the volume elements reference space.
+facet_reference_to_volume_reference :: proc(element_type: Element_Type, facet_point: Vec3, facet_index: int) -> Vec3 {
+	assert(element_type != .Point)
+	switch element_type {
+	case .Point:
+		unreachable()
+	case .Line:
+		return facet_index == 0 ? Vec3{-1, 0, 0} : Vec3{1, 0, 0}
+	case .Triangle:
+		switch facet_index {
+		case 0:
+			return Vec3{facet_point.x, 0, 0}
+		case 1:
+			return Vec3{1 - facet_point.x, facet_point.x, 0}
+		case 2:
+			return Vec3{0, 1 - facet_point.x, 0}
+		case:
+			unreachable()
+		}
+	case .Quadrilateral:
+		switch facet_index {
+		case 0:
+			return Vec3{facet_point.x, -1, 0}
+		case 1:
+			return Vec3{1, facet_point.x, 0}
+		case 2:
+			return Vec3{facet_point.x, 1, 0}
+		case 3:
+			return Vec3{-1, facet_point.x, 0}
+		case:
+			unreachable()
+		}
+	case .Tetrahedron:
+		switch facet_index {
+		case 0:
+			return Vec3{facet_point.x, facet_point.y, 0}
+		case 1:
+			return Vec3{facet_point.x, 0, facet_point.y}
+		case 2:
+			return Vec3{0, facet_point.x, facet_point.y}
+		case 3:
+			return Vec3{1 - facet_point.x - facet_point.y, facet_point.x, facet_point.y}
+		case:
+			unreachable()
+		}
 	case:
 		unreachable()
 	}

@@ -1,44 +1,14 @@
-// SPDX-FileCopyrightText: 2026 Rowan Apps, Tor Rabien
-// SPDX-License-Identifier: MIT
 package main
 
 import "core:log"
-import "core:math/linalg"
 import "core:mem/virtual"
-import "core:time"
-import "core:encoding/json"
-import "core:os/os2"
 
-import "../fem"
-import fio "../fem/serialization"
+import "core:math/linalg"
+
+import fem "../fe_core"
+import fio "../serialization"
+import models "../models"
 import "../la"
-import "../models"
-
-Property :: f64
-
-Schema :: struct {
-    mesh: string,
-    model: enum{Conduction, Elastic_Beam},
-    output: struct {
-    	path: string,
-    },
-    sections: map[string]Section_Info,
-    fields: map[string]Field_Info,
-
-}
-
-Section_Info :: map[string]Property
-
-Field_Info :: struct {
-    order: fem.Order,
-    boundaries: map[string]Boundary_Info,
-}
-
-Boundary_Info :: struct{
-    type: string,
-    value: Property,
-}
-
 
 main :: proc() {
 	context.logger = log.create_console_logger()
@@ -48,97 +18,45 @@ main :: proc() {
 	defer virtual.arena_destroy(&arena)
 	context.allocator = virtual.arena_allocator(&arena)
 
-	fem.populate_basis_tables()
+	fem.setup_quadrature_rules()
+	fem.setup_subcell_rules()
 
-	if len(os2.args) < 2 {
-		log.error("No config file provided.")
-		os2.exit(1)
-	}
+	mesh, warn, err := fio.gmsh_parse("./meshes/line.msh")
 
-	config_path := os2.args[1]
+	isotherm := mesh.boundary_names["Gamma_left"]
+	iso2 := mesh.boundary_names["Gamma_right"]
 
-	json_data, open_err := os2.read_entire_file_from_path(config_path, context.allocator)
+	constrained := make(map[fem.Boundary_ID]f64)
 
-	if open_err != nil {
-		log.error(os2.error_string(open_err))
-		os2.exit(1)
-	}
+	constrained[isotherm] = 273
+	constrained[iso2] = 400
 
-	config: Schema
-	json.unmarshal(json_data, &config, .MJSON)
 
-	log.info("Loading config...")
-	mesh, warn, err := fio.gmsh_parse(config.mesh)
+    model_params := models.Conduction_Params{ soln_order = .Linear, isothermal_bnds = constrained }
 
-	if err != nil {log.error(err); return}
-	if warn != nil {log.warn(warn)}
+    model := models.model_conduction(&model_params)
 
-	switch config.model {
-	case .Conduction: run_conduction(mesh, config)
-	case .Elastic_Beam: unimplemented("beams")
-	case: log.error("Unknown model encountered.")
-	}
-}
+    solve_config := models.Solver_Config{
+        tc = {},
+        output = {
+            output_dir = "./output",
+            frequency = 1,
+            prefix = "test_sim",
+            output_rule = .Split_Linear,
+        },
 
-run_conduction :: proc(mesh: fem.Mesh, c: Schema) {
-	temperature_config, exists := c.fields["temperature"]
-	if !exists {
-		log.error("Temperature field was not defined on config.")
-		return
-	}
+        linsolve_rel_tol = 1e-7,
+        linsolve_max_iter = 1000,
+        non_linear_rel_tol = 1e-5,
+        non_linear_max_iter = 12,
+    }
 
-	constraints := make(map[fem.Boundary_ID]models.Constraint)
-	weak := make(map[fem.Boundary_ID]models.Variational_BC)
-	mat_props := make(map[fem.Section_ID]models.Material_Property)
+    res := models.solve_model(solve_config, &model, mesh)
 
-	for boundary_name, boundary_id in mesh.boundary_names {
-		boundary, exists := temperature_config.boundaries[boundary_name]
-		if !exists {
-			log.errorf("Boundary %s was not defined on temperature", boundary_name)
-			return
-		}
+    if res.converged == false {
+        log.error(res)
+    }else{
+        log.info("Simulation complete!")
+    }
 
-		switch boundary.type {
-		case "isothermal": constraints[boundary_id] = models.isothermal(boundary.value)
-		case "adiabatic": weak[boundary_id] = models.fixed_flux(0)
-		case "flux": weak[boundary_id] = models.fixed_flux(boundary.value)
-		case:
-			log.errorf("%s is not a valid boundary for conduction", boundary.type)
-		}
-	}
-
-	for section_name, section_id in mesh.section_names {
-		section, exists := c.sections[section_name]
-		if !exists {
-			log.errorf("Section %s was not defined in config", section_name)
-			return
-		}
-		if conductivity, exists := section["thermal_conductivity"]; exists {
-			mat_props[section_id] = models.property_conductivity(conductivity)
-		}else{
-			log.errorf("Expected thermal_conductivity defined in section %s", section_name)
-			return
-		}
-	}
-	temperature := models.lagrange_scalar_field(mesh, temperature_config.order, constraints)
-
-	log.infof("solving %d degrees of freedom", len(temperature.coeffs))
-
-	stiffness_sparsity := fem.create_sparsity_from_layout(mesh, temperature, temperature)
-	stiffness := la.sparse_mat_from_sparsity(stiffness_sparsity)
-	load := make(la.Vec, len(temperature.coeffs))
-
-	for element, id in mesh.elements {
-		defer free_all(context.temp_allocator)
-		k, f := models.conduction(mesh, fem.Entity_ID(id), temperature, mat_props[element.section], weak, context.temp_allocator)
-		fem.scatter_local(fem.Entity_ID(id), stiffness, load, k, f, temperature, temperature)
-	}
-
-	solve_time := time.now()
-	iter, resid, converged := la.sparse_cg_solve(stiffness, temperature.coeffs, load)
-	log.infof("solve took: %v", time.since(solve_time))
-
-	viz_mesh := fio.vtk_create_visualization_mesh(mesh, .Visualization_Linear)
-
-	fio.write_vtu(c.output.path, mesh, viz_mesh, {models.lagrange_scalar_field_visualizer(&temperature, "temperature")})
 }

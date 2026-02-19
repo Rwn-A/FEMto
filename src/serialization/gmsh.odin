@@ -7,6 +7,7 @@
 
  NOTE:
   - File is not optimized, nor polished.
+  - Not all mesh invariants are enforced.
 */
 package serialization
 
@@ -22,7 +23,7 @@ import "core:slice"
 import "core:strconv"
 import "core:strings"
 
-import fem "../"
+import fem "../fe_core"
 
 
 GMSH_EXPECTED_MSH_VERSION :: "2.2 1 8"
@@ -158,7 +159,10 @@ gmsh_parse :: proc(
 	// physical names
 	mesh.boundary_names = make(map[string]fem.Boundary_ID)
 	mesh.section_names = make(map[string]fem.Section_ID)
-	names := make(map[string]struct{id: int, dim: fem.Dimension}, context.temp_allocator)
+	names := make(map[string]struct {
+			id:  int,
+			dim: fem.Dimension,
+		}, context.temp_allocator)
 	{
 		expect_ascii_line(&reader, "$PhysicalNames") or_return
 		num_groups := parse_int(read_ascii_line(&reader) or_return) or_return
@@ -185,7 +189,7 @@ gmsh_parse :: proc(
 		for key, value in names {
 			if value.dim < mesh.dim {
 				mesh.boundary_names[key] = fem.Boundary_ID(value.id)
-			}else{
+			} else {
 				mesh.section_names[key] = fem.Section_ID(value.id)
 			}
 		}
@@ -317,10 +321,8 @@ gmsh_parse :: proc(
 
 		mesh_element.type, mesh_element.order = gmsh_type_to_element_info(element.type)
 		mesh_element.section = fem.Section_ID(element.tags[0])
-		mesh_element.adjacency = make([]union {
-				fem.Boundary_ID,
-				fem.Entity_ID,
-			}, fem.element_num_facets(mesh_element.type))
+		mesh_element.boundaries = make([]Maybe(fem.Boundary_ID), fem.element_num_facets(mesh_element.type))
+		mesh_element.id = fem.Entity_ID(i)
 
 		node_builder := make([dynamic]fem.Vec3)
 		for node_index in element.node_indices {append(&node_builder, nodes[node_index])}
@@ -333,19 +335,13 @@ gmsh_parse :: proc(
 			vert_node := vert_nodes[0] // all vertices just have one node
 			if val, exists := found_vertices[mesh_element.nodes[vert_node]]; exists {
 				append(&vert_connectivity_builder, val)
-				if fem.element_dim(mesh_element.type) == .D1 {
-					key := create_key({val})
-					assert(key in facet_entity_adjacency)
-					finder := facet_entity_adjacency[key]
-					mesh_element.adjacency[vert_index] = finder.entity
-					element_builder[finder.entity].adjacency[finder.facet_index] = fem.Entity_ID(i)
-				}
 				continue
 			}
 			found_vertices[mesh_element.nodes[vert_node]] = next_new_vert
 			append(&vert_connectivity_builder, next_new_vert)
-			if fem.element_dim(mesh_element.type) ==
-			   .D1 {facet_entity_adjacency[create_key({next_new_vert})] = {fem.Entity_ID(i), vert_index}}
+			if fem.element_dim(mesh_element.type) == .D1 {
+				facet_entity_adjacency[create_key({next_new_vert})] = {fem.Entity_ID(i), vert_index}
+			}
 			next_new_vert += 1
 		}
 
@@ -368,12 +364,6 @@ gmsh_parse :: proc(
 
 			if edge_key in found_edges {
 				append(&edge_connectivity_builder, found_edges[edge_key])
-				if fem.element_dim(mesh_element.type) == .D2 {
-					assert(edge_key in facet_entity_adjacency)
-					finder := facet_entity_adjacency[edge_key]
-					mesh_element.adjacency[edge_index] = finder.entity
-					element_builder[finder.entity].adjacency[finder.facet_index] = fem.Entity_ID(i)
-				}
 			} else {
 				found_edges[edge_key] = next_new_edge
 				append(&edge_connectivity_builder, next_new_edge)
@@ -414,21 +404,17 @@ gmsh_parse :: proc(
 				}
 			}
 
-			facet_type := fem.element_facet_type(mesh_element.type, face_index)
-			for reference_perm, orientation_idx in fem.FACE_ORIENTATIONS[facet_type] {
-				if slice.equal(permutation[:], reference_perm) {
-					mesh_element.face_orientation[face_index] = u8(orientation_idx)
-					break
-				}
-			}
+			//facet_type := fem.element_facet_type(mesh_element.type, face_index)
+			// for reference_perm, orientation_idx in fem.FACE_ORIENTATIONS[facet_type] {
+			// 	if slice.equal(permutation[:], reference_perm) {
+			// 		mesh_element.face_orientation[face_index] = u8(orientation_idx)
+			// 		break
+			// 	}
+			// }
 
 
 			if face_key in found_faces {
 				append(&face_connectivity_builder, found_faces[face_key])
-				assert(face_key in facet_entity_adjacency)
-				finder := facet_entity_adjacency[face_key]
-				mesh_element.adjacency[face_index] = finder.entity
-				element_builder[finder.entity].adjacency[finder.facet_index] = fem.Entity_ID(i)
 			} else {
 				found_faces[face_key] = next_new_face
 				append(&face_connectivity_builder, next_new_face)
@@ -438,7 +424,6 @@ gmsh_parse :: proc(
 		}
 
 		mesh_element.downward_connectivity[.D2] = face_connectivity_builder[:]
-		mesh_element.face_orientation = face_orientations[:]
 	}
 
 	for element in raw_boundary_elements {
@@ -463,7 +448,7 @@ gmsh_parse :: proc(
 		}
 		assert(key in facet_entity_adjacency)
 		finder := facet_entity_adjacency[key]
-		element_builder[finder.entity].adjacency[finder.facet_index] = fem.Boundary_ID(element.tags[0])
+		element_builder[finder.entity].boundaries[finder.facet_index] = fem.Boundary_ID(element.tags[0])
 	}
 	mesh.num_vertices = int(next_new_vert)
 	mesh.num_edges = int(next_new_edge)

@@ -11,14 +11,14 @@ import "core:mem"
 import "core:os/os2"
 import "core:strconv"
 
-import "../../fem"
+import fem"../fe_core"
 
 VTK_Raw_Mesh :: struct {
 	vertices:     []fem.Vec3,
 	connectivity: []i32,
 	offsets:      []i32,
 	types:        []u8,
-	rule:         fem.Sample_Group,
+	rule:         fem.Subcell_Rule,
 }
 
 VTK_Element_Type :: enum u8 {
@@ -38,25 +38,24 @@ VTK_ELEMENT_TYPE_FROM_NATIVE := [fem.Element_Type]VTK_Element_Type {
 	.Tetrahedron   = .Tetrahedron,
 }
 
-vtk_create_visualization_mesh :: proc(mesh: fem.Mesh, rule: fem.Sample_Group, allocator := context.allocator) -> VTK_Raw_Mesh {
+vtk_create_visualization_mesh :: proc(mesh: fem.Mesh, rule: fem.Subcell_Rule, allocator := context.allocator) -> VTK_Raw_Mesh {
 	context.allocator = allocator
-	assert(rule in fem.Visualization_Groups)
 
 	vertices := make([dynamic]fem.Vec3)
 	connectivity := make([dynamic]i32)
 	offsets := make([dynamic]i32)
 	types := make([dynamic]u8)
 
-	for element, i in mesh.elements {
+	for &element, i in mesh.elements {
 		base_vertex_idx := i32(len(vertices))
 
-		si, ctx := fem.sample_context_create(mesh, fem.Entity_ID(i))
-		ctx.element = fem.element_reduce_to_linear(element)
-		for fem.iterate_sample_group(&si, &ctx, rule) {
-			append(&vertices, fem.sample_physical_point(&ctx))
+        subcell, count := fem.subcell_for(element, rule, {.Physical_Point})
+        subcell.element.el = fem.element_reduce_to_linear(element)
+		for i in 0..<count {
+			append(&vertices, fem.compute_physical_point_context(subcell, i))
 		}
 
-		for subcell in fem.VISUALIZATION_CONNECTIVITY[element.type][rule] {
+		for subcell in fem.SUBCELL_CONNECTIVITY[element.type][rule] {
 			for node_index in subcell {append(&connectivity, base_vertex_idx + i32(node_index))}
 			append(&offsets, i32(len(connectivity)))
 			append(&types, u8(VTK_ELEMENT_TYPE_FROM_NATIVE[element.type]))
@@ -120,7 +119,7 @@ write_vtu :: proc(
 	path: string,
 	mesh: fem.Mesh,
 	viz_mesh: VTK_Raw_Mesh,
-	fields: []fem.Visualization_Field,
+	fields: []Output_Field,
 	allocator := context.allocator,
 ) -> (
 	err: os2.Error,
@@ -218,11 +217,15 @@ write_vtu :: proc(
 			for i in 0 ..< len(fields) {delete(point_data[i])}
 		}
 
-		for _, element_id in mesh.elements {
-			si, ctx := fem.sample_context_create(mesh, fem.Entity_ID(element_id))
-			for fem.iterate_sample_group(&si, &ctx, viz_mesh.rule) {
+		for element, element_id in mesh.elements {
+            geometry_required := fem.Geometry_Options{}
+            for field in fields { geometry_required += field.geometry_required }
+
+            subcell, count := fem.subcell_for(element, viz_mesh.rule, geometry_required)
+
+			for point in 0..<count {
 				for field, i in fields {
-					data := field.value_provider(&ctx, field.data)
+					data := field.value_provider(subcell, point, field.data)
 					append(&point_data[i], ..(data[:field.components]))
 				}
 			}
