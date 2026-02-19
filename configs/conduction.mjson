@@ -1,23 +1,19 @@
-mesh = "./meshes/expensive.msh"
+name = "my_sim"
+
+mesh = "../meshes/part.msh"
 
 model = Conduction
 
-sections = {
-    beam = {
-        thermal_conductivity = 45
-    }
-}
-
 fields = {
     temperature = {
-        order = Quadratic,
+        order = Linear,
         boundaries = {
-            "constraint" = {type = "isothermal", value = 100},
-            "free" = {type = "adiabatic"}
+            "left" = {type = "isothermal", temperature = 100},
+            "right" = {type = "isothermal", temperature = 200}
         }
     }
 }
 
 output = {
-    path = "results.vtu"
+    directory = "../output"
 }

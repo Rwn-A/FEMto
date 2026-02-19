@@ -11,11 +11,15 @@ sparse_cg_solve :: proc(
 	max_iter: int,
 	rel_tol: f64,
 	allocator := context.allocator,
-) -> (converged: bool, iters: int, residual: f64) {
-    n := len(x.values)
+) -> (
+	converged: bool,
+	iters: int,
+	residual: f64,
+) {
+	n := len(x.values)
 
-    r := block_vector_zero_clone(x)
-    p := block_vector_zero_clone(x)
+	r := block_vector_zero_clone(x)
+	p := block_vector_zero_clone(x)
 	Ap := block_vector_zero_clone(x)
 
 	copy(r.values, b.values)
@@ -23,12 +27,12 @@ sparse_cg_solve :: proc(
 
 	copy(p.values, r.values)
 
-    rsold := dot(r, r)
-    b_norm := nrm2(b)
+	rsold := dot(r, r)
+	b_norm := nrm2(b)
 
-    if b_norm < 1e-15 {b_norm = 1.0}
+	if b_norm < 1e-15 {b_norm = 1.0}
 
-    for iter := 0; iter < max_iter; iter += 1 {
+	for iter := 0; iter < max_iter; iter += 1 {
 		gemv(A, p, Ap, a = 1.0, b = 0.0)
 		pAp := dot(p, Ap)
 

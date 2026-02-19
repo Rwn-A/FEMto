@@ -81,12 +81,12 @@ ca_rewind_to_keep :: proc(ca: ^Checkpoint_Allocator, checkpoint: Checkpoint) {
 
 // Resize the data buffer, only call manually if you want to provide more size up front, cannot shrink the backing data.
 ca_resize_backing :: proc(ca: ^Checkpoint_Allocator, new_size: int) -> mem.Allocator_Error {
-	if new_size <= len(ca.data) { return nil }
+	if new_size <= len(ca.data) {return nil}
 
 	// Since we're using virtual arena, resize should preserve pointers
 	backing_allocator := virtual.arena_allocator(&ca.backing)
 	new_data, err := mem.resize(raw_data(ca.data), slice.size(ca.data), new_size, allocator = backing_allocator)
-	if err != nil { return err }
+	if err != nil {return err}
 
 	ca.data = slice.from_ptr(cast(^u8)new_data, new_size)
 	return nil
@@ -119,13 +119,13 @@ ca_allocator_proc :: proc(
 		// Check if we need to resize backing
 		if end_offset > len(ca.data) {
 			new_size := max(len(ca.data) * 2, end_offset) // TODO: doubling might be a bit agressive, maybe align end offset to a page boundary and allocate that.
-			if err := ca_resize_backing(ca, new_size); err != nil { return nil, err }
+			if err := ca_resize_backing(ca, new_size); err != nil {return nil, err}
 		}
 
 		result := ca.data[aligned_offset:end_offset]
 		ca.offset = end_offset
 
-		if mode == .Alloc { mem.zero_slice(result) }
+		if mode == .Alloc {mem.zero_slice(result)}
 
 		return result, nil
 	case .Free:
@@ -135,7 +135,8 @@ ca_allocator_proc :: proc(
 		sa.clear(&ca.checkpoints)
 		return nil, nil
 	case .Resize, .Resize_Non_Zeroed:
-		if old_memory == nil { return ca_allocator_proc(allocator_data, .Alloc if mode == .Resize else .Alloc_Non_Zeroed, size, alignment, nil, 0, loc) }
+		if old_memory ==
+		   nil {return ca_allocator_proc(allocator_data, .Alloc if mode == .Resize else .Alloc_Non_Zeroed, size, alignment, nil, 0, loc)}
 
 		old_ptr := cast(uintptr)old_memory
 		data_start := cast(uintptr)raw_data(ca.data)
@@ -146,18 +147,26 @@ ca_allocator_proc :: proc(
 
 			if new_end_offset > len(ca.data) {
 				new_backing_size := max(len(ca.data) * 2, new_end_offset)
-				if err := ca_resize_backing(ca, new_backing_size); err != nil { return nil, err }
+				if err := ca_resize_backing(ca, new_backing_size); err != nil {return nil, err}
 			}
 
 			ca.offset = new_end_offset
 			result := ca.data[aligned_offset:new_end_offset]
 
-			if mode == .Resize && size > old_size { mem.zero_slice(result[old_size:]) }
+			if mode == .Resize && size > old_size {mem.zero_slice(result[old_size:])}
 
 			return result, nil
 		} else {
-			new_memory, err := ca_allocator_proc(allocator_data, .Alloc if mode == .Resize else .Alloc_Non_Zeroed, size, alignment, nil, 0, loc)
-			if err != nil { return nil, err }
+			new_memory, err := ca_allocator_proc(
+				allocator_data,
+				.Alloc if mode == .Resize else .Alloc_Non_Zeroed,
+				size,
+				alignment,
+				nil,
+				0,
+				loc,
+			)
+			if err != nil {return nil, err}
 
 			copy_size := min(old_size, size)
 			copy(new_memory[:copy_size], slice.from_ptr(cast(^u8)old_memory, old_size)[:copy_size])

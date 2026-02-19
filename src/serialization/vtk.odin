@@ -11,7 +11,7 @@ import "core:mem"
 import "core:os/os2"
 import "core:strconv"
 
-import fem"../fe_core"
+import fem "../fe_core"
 
 VTK_Raw_Mesh :: struct {
 	vertices:     []fem.Vec3,
@@ -49,9 +49,9 @@ vtk_create_visualization_mesh :: proc(mesh: fem.Mesh, rule: fem.Subcell_Rule, al
 	for &element, i in mesh.elements {
 		base_vertex_idx := i32(len(vertices))
 
-        subcell, count := fem.subcell_for(element, rule, {.Physical_Point})
-        subcell.element.el = fem.element_reduce_to_linear(element)
-		for i in 0..<count {
+		subcell, count := fem.subcell_for(element, rule, {.Physical_Point})
+		subcell.element.el = fem.element_reduce_to_linear(element)
+		for i in 0 ..< count {
 			append(&vertices, fem.compute_physical_point_context(subcell, i))
 		}
 
@@ -218,12 +218,12 @@ write_vtu :: proc(
 		}
 
 		for element, element_id in mesh.elements {
-            geometry_required := fem.Geometry_Options{}
-            for field in fields { geometry_required += field.geometry_required }
+			geometry_required := fem.Geometry_Options{}
+			for field in fields {geometry_required += field.geometry_required}
 
-            subcell, count := fem.subcell_for(element, viz_mesh.rule, geometry_required)
+			subcell, count := fem.subcell_for(element, viz_mesh.rule, geometry_required)
 
-			for point in 0..<count {
+			for point in 0 ..< count {
 				for field, i in fields {
 					data := field.value_provider(subcell, point, field.data)
 					append(&point_data[i], ..(data[:field.components]))
