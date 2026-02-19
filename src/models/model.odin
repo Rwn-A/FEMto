@@ -73,6 +73,7 @@ Model :: struct {
 		layout: fem.Layout,
 		element: fem.Mesh_Element,
 		current_iterate: la.Block_Vector,
+		previous_iterate: la.Block_Vector,
 		tc: Time_Context,
 		R: la.Block_Vector,
 		J: la.Block_Dense_Matrix,
@@ -96,10 +97,10 @@ solve_model :: proc(config: Solver_Config, model: ^Model, mesh: fem.Mesh) -> Sol
 	infra.ca_init(&ca)
 	defer infra.ca_deinit(&ca)
 
+
 	context.allocator = infra.ca_allocator(&ca)
 
 	// setup output
-	output_field_buffer := make([dynamic]fio.Output_Field)
 	viz_mesh := fio.vtk_create_visualization_mesh(mesh, config.output.output_rule)
 	if !os2.exists(config.output.output_dir) {
 		os2.make_directory(config.output.output_dir)
@@ -109,6 +110,7 @@ solve_model :: proc(config: Solver_Config, model: ^Model, mesh: fem.Mesh) -> Sol
 	layout, constraint_mask := model->define_layout(mesh, context.allocator)
 
 	u_k := fem.layout_make_vec(&layout) // current solution
+	u_prev := fem.layout_make_vec(&layout) //solution at previous time
 	R := fem.layout_make_vec(&layout) // working residual vector
 	J := fem.layout_make_matrix(&layout) // working jacobian matrix
 	du := fem.layout_make_vec(&layout) // incremental update to u
@@ -131,7 +133,7 @@ solve_model :: proc(config: Solver_Config, model: ^Model, mesh: fem.Mesh) -> Sol
 
 			local_r, local_j := fem.layout_local_problem(&layout, element)
 
-			model->build_local_problem(layout, element, u_k, tc, local_r, local_j, context.allocator)
+			model->build_local_problem(layout, element, u_k, u_prev, tc, local_r, local_j, context.allocator)
 
 			fem.layout_scatter_local(layout, element.id, J, R, local_j, local_r, constraint_mask)
 		}
@@ -162,7 +164,7 @@ solve_model :: proc(config: Solver_Config, model: ^Model, mesh: fem.Mesh) -> Sol
 
 				local_r, local_j := fem.layout_local_problem(&layout, element)
 
-				model->build_local_problem(layout, element, u_k, tc, local_r, local_j, context.allocator)
+				model->build_local_problem(layout, element, u_k, u_prev, tc, local_r, local_j, context.allocator)
 
 				fem.layout_scatter_local(layout, element.id, J, R, local_j, local_r, constraint_mask)
 			}
@@ -184,22 +186,29 @@ solve_model :: proc(config: Solver_Config, model: ^Model, mesh: fem.Mesh) -> Sol
 		}
 
 		if (steps_taken + 1) % config.output.frequency == 0 {
+			output_field_buffer := make([dynamic]fio.Output_Field, 0, 16)
+
 			model->output_fields(layout, u_k, &output_field_buffer)
-			defer clear(&output_field_buffer)
 
 			filename := fmt.aprintf("%s_%d.vtu", config.output.prefix, steps_taken)
 			path, _ := os2.join_path({config.output.output_dir, filename}, context.allocator)
 
 			fio.write_vtu(path, mesh, viz_mesh, output_field_buffer[:])
+
 		}
+		copy(u_prev.values, u_k.values)
 
 		tc.current_time += tc.timestep
-		if tc.current_time >= tc.end_time || !tc.is_transient {break}
+		if tc.current_time >= tc.end_time || !tc.is_transient {
+			break
+		}
 	}
 
 	return {converged = true}
 }
 
+
+//TODO: consider moving this stuff into layout
 
 field_to_output_field :: proc(
 	layout: fem.Layout,
@@ -240,6 +249,7 @@ field_coeff :: #force_inline proc(
 	return u.values[fem.layout_global_pos(layout, field, element_id, dof)]
 }
 
+
 field_mark_constraints :: proc(
 	mesh: fem.Mesh,
 	layout: fem.Layout,
@@ -260,6 +270,22 @@ Output_Field_Info :: struct {
 	data:   []f64,
 	layout: fem.DOF_Layout,
 	order:  fem.Order,
+}
+
+evaluate_lagrange_scalar :: proc(
+	layout: fem.Layout,
+	ctx: fem.Element_Context,
+	field: fem.Field_Handle,
+	basis: fem.Basis_LS,
+	u: la.Block_Vector,
+	out: []f64,
+) {
+	for pi in 0..<len(ctx.points) {
+		for dof in 0..<basis.arity {
+			coeff := field_coeff(layout, field, u, ctx.element.id, dof)
+			out[pi] += fem.basis_value(basis, ctx, pi, dof) * coeff
+		}
+	}
 }
 
 output_lagrange_scalar :: proc(ctx: fem.Element_Context, point: int, data: rawptr) -> (r: [fio.MAX_OUTPUT_FIELD_COMPONENTS]f64) {

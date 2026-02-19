@@ -65,6 +65,17 @@ quadrature_for :: proc(
 	return qctx, len(qctx.weights)
 }
 
+// TODO: quadrature needs to ensure facet indices are ordered, and we can probably cache start, end.
+facet_quad :: proc(qctx: Quadrature_Context, facet: int) -> (start: int, end: int) {
+	start = -1
+	for facet_index, i in qctx.facet_indices {
+		if facet_index == facet {start = i}
+		if start != -1 && facet_index != facet {end = i}
+	}
+	if end == 0 {end = len(qctx.facet_indices)}
+	return start, end
+}
+
 dV :: #force_inline proc(qctx: Quadrature_Context, point: int) -> f64 {
 	return qctx.weights[point] * ctx_jacobian_determinant(qctx, point)
 }

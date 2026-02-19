@@ -27,3 +27,10 @@ Mesh_Element :: struct {
 	id:                    Entity_ID, // same as its index in mesh.elements
 	//TODO: face_orientation
 }
+
+boundary_set :: proc(element: Mesh_Element) -> (r: bit_set[0..<MAX_FACETS]) {
+	for bound, index in element.boundaries {
+		if _, is := bound.?; is {r += {index}}
+	}
+	return r
+}

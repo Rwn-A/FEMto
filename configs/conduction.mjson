@@ -1,19 +1,32 @@
-name = "my_sim"
-
-mesh = "../meshes/part.msh"
-
+name = "cantilever_conduction"
+mesh = "../meshes/cantilever.msh"
 model = Conduction
-
+sections = {
+    beam = {
+        material = {
+            type = "constant",
+            conductivity = 205,      // W/m * K, aluminum
+            density = 2700,          // kg/m^3
+            specific_heat = 900,     // J/kg * K
+        }
+    }
+}
 fields = {
     temperature = {
         order = Linear,
         boundaries = {
-            "left" = {type = "isothermal", temperature = 100},
-            "right" = {type = "isothermal", temperature = 200}
+            "constraint" = {type = "isothermal", temperature = 373},   // 100C, e.g. hot wall
+            "free" = {type = "convective", convective_coefficient = 10, ambient_temp = 293}  // 20C ambient, natural convection
         }
     }
 }
 
+transient = {
+    end = 10,
+    timestep = 1,
+}
+
 output = {
-    directory = "../output"
+    directory = "../output",
+    frequency = 1,
 }

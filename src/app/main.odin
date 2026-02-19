@@ -6,6 +6,7 @@ import "core:math/linalg"
 import "core:mem/virtual"
 import "core:os/os2"
 import "core:path/filepath"
+import "core:slice"
 
 import fem "../fe_core"
 import "../la"
@@ -91,6 +92,11 @@ Field_Config :: struct {
 	boundaries: map[string]Property_Config,
 }
 
+Section_Config :: struct {
+	material: Property_Config,
+	sources: []Property_Config,
+}
+
 Property_Value :: union {
 	f64,
 	string,
@@ -122,6 +128,7 @@ Config_Schema :: struct {
 		rtol:           f64,
 	},
 	fields:            map[string]Field_Config,
+	sections: 		   map[string]Section_Config,
 }
 
 assign_default :: proc(a: $T, default: T) -> T {
@@ -158,6 +165,9 @@ configure_conduction :: proc(cs: Config_Schema, mesh: fem.Mesh) -> (m: models.Mo
 
 	model_params.soln_order = config_field.order
 	model_params.isothermal_bnds = make(map[fem.Boundary_ID]f64)
+	model_params.materials = make(map[fem.Section_ID]models.Conduction_Material_Int)
+	model_params.variational_bcs = make(map[fem.Boundary_ID]models.Conduction_BC_Int)
+	model_params.sources = make(map[fem.Section_ID][]models.Conduction_Source_Int)
 
 	for bnd_name, bnd_config in config_field.boundaries {
 		id, exists := mesh.boundary_names[bnd_name]
@@ -169,15 +179,101 @@ configure_conduction :: proc(cs: Config_Schema, mesh: fem.Mesh) -> (m: models.Mo
 		case "isothermal":
 			model_params.isothermal_bnds[id] = property_get(f64, bnd_config, "temperature") or_return
 		case "adiabatic": // no op
+		case "flux":
+			data := new(Fixed_Flux_Data)
+			data.flux =  property_get(f64, bnd_config, "prescribed_flux") or_return
+			model_params.variational_bcs[id] = {
+				data = data,
+				procedure = proc(ctx: fem.Element_Context, start, end: int, current_time: f64, current_soln: []f64, data: rawptr, out: models.Conduction_BC) {
+					info := cast(^Fixed_Flux_Data)data
+					slice.fill(out.q, info.flux)
+				}
+			}
+		case "convective":
+			data := new(Convective_Data)
+			data.h =  property_get(f64, bnd_config, "convective_coefficient") or_return
+			data.ambient = property_get(f64, bnd_config, "ambient_temp") or_return
+			model_params.variational_bcs[id] = {
+				data = data,
+				procedure = proc(ctx: fem.Element_Context, start, end: int, current_time: f64, current_soln: []f64, data: rawptr, out: models.Conduction_BC) {
+					info := cast(^Convective_Data)data
+					slice.fill(out.h, info.h)
+					slice.fill(out.T_amb, info.ambient)
+				}
+			}
 		case:
 			log.errorf("%s is not a recognized boundary for temperature.", bnd_type)
 		}
+	}
 
+	for section_name, section_config in cs.sections {
+		id, exists := mesh.section_names[section_name]
+		if !exists {
+			log.errorf("section %s is not declared on the mesh.", section_name); return {}, false
+		}
+
+		mat := section_config.material
+
+		mat_type := property_get(string, mat, "type") or_return
+
+		switch mat_type{
+			case "constant":
+				data := new(Constant_Material_Data)
+				data.k = property_get(f64, mat, "conductivity") or_return
+				data.rho = property_get(f64, mat, "density") or_return
+				data.cp = property_get(f64, mat, "specific_heat") or_return
+				model_params.materials[id] = {
+					data = data,
+					procedure =  proc(ctx: fem.Element_Context, current_time: f64, current_soln: []f64, data: rawptr, out: models.Conduction_Material) {
+						info := cast(^Constant_Material_Data)data
+						slice.fill(out.k, info.k); slice.fill(out.rho, info.rho); slice.fill(out.cp, info.cp)
+					}
+				}
+			case:
+				log.errorf("%s is not a recognized material type.", mat_type); return {}, false
+		}
+		model_params.sources[id] = make([]models.Conduction_Source_Int, len(section_config.sources))
+		for source, i in section_config.sources {
+			type := property_get(string, source, "type") or_return
+			switch type {
+			case "constant":
+				data := new(Constant_Source_Data)
+				data.Q = property_get(f64, source, "heat_source") or_return
+				model_params.sources[id][i] = {
+					data = data,
+					procedure =  proc(ctx: fem.Element_Context, current_time: f64, current_soln: []f64, data: rawptr, out: models.Conduction_Source) {
+						info := cast(^Constant_Source_Data)data
+						for &entry in out.Q{entry += info.Q}
+					}
+				}
+			case:
+				log.errorf("%s is not a recognized source term", type); return {}, false
+			}
+		}
 
 	}
 
 
 	model := models.model_conduction(model_params)
+
+	Constant_Material_Data :: struct {
+		k, rho, cp: f64
+	}
+
+	Constant_Source_Data :: struct {
+		Q: f64,
+	}
+
+	Fixed_Flux_Data :: struct {
+		flux: f64,
+	}
+
+	Convective_Data :: struct {
+		h: f64,
+		ambient: f64,
+	}
+
+
 
 	return model, true
 }
@@ -196,6 +292,4 @@ property_get :: proc($T: typeid, pc: Property_Config, key: string) -> (T, bool) 
 	}
 
 	return unwrapped, true
-
-
 }
