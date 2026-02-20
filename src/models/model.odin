@@ -55,6 +55,8 @@ Model :: struct {
 	// also return which global dofs are constrained.
 	define_layout:       proc(m: ^Model, mesh: fem.Mesh, allocator: mem.Allocator) -> (fem.Layout, fem.Constraint_Mask),
 
+	set_initial_conditions: proc(m: ^Model, layout: fem.Layout, mesh:fem.Mesh, initial_solution: la.Block_Vector),
+
 	// update the current iterate such that it respects the constrained dofs.
 	// mask is passed in to make it quicker to identify constrained dofs without duplicating work from `define_layout`.
 	// allocator is provided in the case a temporary allocation is needed to compute the constrained value.
@@ -123,8 +125,16 @@ solve_model :: proc(config: Solver_Config, model: ^Model, mesh: fem.Mesh) -> Sol
 	du := fem.layout_make_vec(&layout) // incremental update to u
 
 
+
 	// time loop
 	tc := config.tc
+
+	if tc.is_transient {
+		model->set_initial_conditions(layout, mesh, u_prev)
+	}else{
+		model->set_initial_conditions(layout, mesh, u_k)
+	}
+	
 	for steps_taken := 0;; steps_taken += 1 {
 		loop_start := infra.ca_check(&ca)
 		defer infra.ca_rewind_to(&ca, loop_start)
@@ -193,6 +203,10 @@ solve_model :: proc(config: Solver_Config, model: ^Model, mesh: fem.Mesh) -> Sol
 			}
 		}
 
+		copy(u_prev.values, u_k.values)
+
+		tc.current_time += tc.timestep
+
 		if (steps_taken + 1) % config.output.frequency == 0 {
 			output_field_buffer := make([dynamic]fio.Output_Field, 0, 16)
 
@@ -207,11 +221,8 @@ solve_model :: proc(config: Solver_Config, model: ^Model, mesh: fem.Mesh) -> Sol
 				append(&pvd_paths, strings.clone(path, perm_alloc))
 				append(&pvd_times, tc.current_time)
 			}
-
 		}
-		copy(u_prev.values, u_k.values)
 
-		tc.current_time += tc.timestep
 		if tc.current_time >= tc.end_time || !tc.is_transient {
 			break
 		}
@@ -303,6 +314,22 @@ evaluate_lagrange_scalar :: proc(
 		for dof in 0..<basis.arity {
 			coeff := field_coeff(layout, field, u, ctx.element.id, dof)
 			out[pi] += fem.basis_value(basis, ctx, pi, dof) * coeff
+		}
+	}
+}
+
+evaluate_lagrange_scalar_gradient :: proc(
+	layout: fem.Layout,
+	ctx: fem.Element_Context,
+	field: fem.Field_Handle,
+	basis: fem.Basis_LS,
+	u: la.Block_Vector,
+	out: []fem.Vec3,
+) {
+	for pi in 0..<len(ctx.points) {
+		for dof in 0..<basis.arity {
+			coeff := field_coeff(layout, field, u, ctx.element.id, dof)
+			out[pi] += fem.basis_gradient(basis, ctx, pi, dof) * coeff
 		}
 	}
 }

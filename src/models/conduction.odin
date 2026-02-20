@@ -49,7 +49,7 @@ Conduction_BC_Proc :: #type proc(ctx: fem.Element_Context, point_start, point_en
 
 Conduction_BC :: struct {
 	q, h, T_amb: []f64,
-	d_q, d_h, d_T_amb:    []f64,
+	d_q, d_h:    []f64,
 }
 
 
@@ -81,17 +81,17 @@ blank_conduction_bc :: proc(num_points: int, allocator := context.allocator) -> 
 		T_amb = make([]f64, num_points),
 		d_q = make([]f64, num_points),
 		d_h = make([]f64, num_points),
-		d_T_amb = make([]f64, num_points)
 	}
 }
 
 Conduction_Params :: struct {
 	soln_order:      fem.Order,
-	isothermal_bnds: map[fem.Boundary_ID]f64,
+	isothermal_bnds: map[fem.Boundary_ID]f64, // TODO: more dynamic dirichlet
 
 	materials: map[fem.Section_ID]Conduction_Material_Int,
 	sources: map[fem.Section_ID][]Conduction_Source_Int,
 	variational_bcs: map[fem.Boundary_ID]Conduction_BC_Int,
+	ics: map[fem.Section_ID]f64, // TODO: should this be more dynamic? or handled by config
 
 	// state.
 	temp_fh:         fem.Field_Handle,
@@ -141,6 +141,20 @@ model_conduction :: proc(p: ^Conduction_Params) -> Model {
 		}
 	}
 
+	// TODO: this is bit scuffed.
+	set_initial_conditions :: proc(m: ^Model, layout: fem.Layout, mesh: fem.Mesh, initial_solution: la.Block_Vector) {
+		params := cast(^Conduction_Params)m.data
+
+		for element in mesh.elements {
+			ic_val := params.ics[element.section] or_else 0
+
+			for local_dof in 0..<len(layout.dof_layouts[params.temp_fh].mapping[element.id]){
+				global := fem.layout_global_pos(layout, params.temp_fh, element.id, local_dof)
+				initial_solution.values[global] = ic_val
+			}
+		}
+	}
+
 	build_local_problem :: proc(
 		m: ^Model,
 		layout: fem.Layout,
@@ -164,10 +178,12 @@ model_conduction :: proc(p: ^Conduction_Params) -> Model {
 		)
 
 		current_soln := make([]f64, len(quad.points))
+		current_grad := make([]fem.Vec3, len(quad.points))
 		material := blank_conduction_material(len(quad.points))
 		sources := blank_conduction_source(len(quad.points))
 
 		evaluate_lagrange_scalar(layout, quad, params.temp_fh, basis, current_iterate, current_soln)
+		evaluate_lagrange_scalar_gradient(layout, quad, params.temp_fh, basis, current_iterate, current_grad)
 		mat_int := params.materials[element.section]
 		mat_int.procedure(quad, tc.current_time, current_soln, mat_int.data, material)
 
@@ -180,27 +196,40 @@ model_conduction :: proc(p: ^Conduction_Params) -> Model {
 		dt_inv := (1 / tc.timestep) if tc.is_transient else 0 // zero if steady, 1/dt if transient
 
 		for qp in 0 ..< count {
+			grad_T := current_grad[qp]
+			T := current_soln[qp]
 			for test in 0 ..< basis.arity {
 				grad_v := fem.basis_gradient(basis, quad, qp, test)
 				v := fem.basis_value(basis, quad, qp, test)
-				for trial in 0 ..< basis.arity {
+				r_idx := la.idx(R, int(params.temp_fh), test)
 
+				// sources
+				R.values[r_idx] += sources.Q[qp] * fem.basis_value(basis, quad, qp, test) * fem.dV(quad, qp)
+				for trial in 0 ..< basis.arity {
 					grad_u := fem.basis_gradient(basis, quad, qp, trial)
 					u := fem.basis_value(basis, quad, qp, trial)
 					u_j := field_coeff(layout, params.temp_fh, current_iterate, element.id, trial)
 					u_j_old := field_coeff(layout, params.temp_fh, previous_iterate, element.id, trial)
 
+					j_idx := la.idx(J, int(params.temp_fh), int(params.temp_fh), test, trial)
+
 					// stiffness
 					J_ij := linalg.dot(grad_u, grad_v) * material.k[qp] * fem.dV(quad, qp)
-					R.values[la.idx(R, int(params.temp_fh), test)] += -J_ij * u_j
-					J.values[la.idx(J, int(params.temp_fh), int(params.temp_fh), test, trial)] += J_ij
+					J_ij_nonlinear := linalg.dot(grad_T, grad_v) * material.d_k[qp] * u * fem.dV(quad, qp)
 
-					// mass (timestepping)
+					R.values[r_idx] += -J_ij * u_j
+					J.values[j_idx] += J_ij + J_ij_nonlinear
+
+					// mass (timestepping, reduces to 0 when not transient.)
 					M_ij := u * v * material.rho[qp] * material.cp[qp] * fem.dV(quad, qp)
-					R.values[la.idx(R, int(params.temp_fh), test)] += -M_ij * (u_j - u_j_old) * dt_inv
-					J.values[la.idx(J, int(params.temp_fh), int(params.temp_fh), test, trial)] += M_ij * dt_inv
+					R.values[r_idx] += -M_ij * (u_j - u_j_old) * dt_inv
+
+					M_ij_nonlinear := (u * v * (material.d_rho[qp] * material.cp[qp] * f64(int(tc.is_transient))) + material.rho[qp] * material.d_cp[qp]) * (u_j - u_j_old) * dt_inv * fem.dV(quad, qp)
+					J.values[j_idx] += M_ij * dt_inv - M_ij_nonlinear
+
+					// source terms (nonlinear part)
+					J.values[j_idx] -= sources.d_Q[qp] * u * v * fem.dV(quad, qp)
 				}
-				R.values[la.idx(R, int(params.temp_fh), test)] += sources.Q[qp] * fem.basis_value(basis, quad, qp, test) * fem.dV(quad, qp)
 			}
 		}
 
@@ -235,7 +264,12 @@ model_conduction :: proc(p: ^Conduction_Params) -> Model {
 			        R.values[la.idx(R, int(params.temp_fh), test)] += (q + h * T_amb - h * current_soln[qp]) * v * fem.dS(quad, qp)
 					for trial in 0..<basis.arity {
 						 u := fem.basis_value(basis, quad, qp, trial)
-            			 J.values[la.idx(J, int(params.temp_fh), int(params.temp_fh), test, trial)] += h * u * v * fem.dS(quad, qp)
+						 j_idx := la.idx(J, int(params.temp_fh), int(params.temp_fh), test, trial)
+            			 J.values[j_idx] += h * u * v * fem.dS(quad, qp)
+            			 // non linear h
+            			 J.values[j_idx] += bc_coeff.d_h[qp-start] * (T_amb - current_soln[qp]) * u * v * fem.dS(quad, qp)
+					     // non linear q
+            			 J.values[j_idx] -= bc_coeff.d_q[qp-start] * u * v * fem.dS(quad, qp)
 					}
 				}
 			}
@@ -255,6 +289,7 @@ model_conduction :: proc(p: ^Conduction_Params) -> Model {
 	return Model {
 		data = p,
 		define_layout = define_layout,
+		set_initial_conditions = set_initial_conditions,
 		respect_constraints = respect_constraints,
 		build_local_problem = build_local_problem,
 		output_fields = output_fields,

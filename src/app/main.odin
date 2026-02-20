@@ -90,6 +90,7 @@ run :: proc() -> bool {
 Field_Config :: struct {
 	order:      fem.Order,
 	boundaries: map[string]Property_Config,
+	initial_conditions: map[string]Property_Config,
 }
 
 Section_Config :: struct {
@@ -168,6 +169,7 @@ configure_conduction :: proc(cs: Config_Schema, mesh: fem.Mesh) -> (m: models.Mo
 	model_params.materials = make(map[fem.Section_ID]models.Conduction_Material_Int)
 	model_params.variational_bcs = make(map[fem.Boundary_ID]models.Conduction_BC_Int)
 	model_params.sources = make(map[fem.Section_ID][]models.Conduction_Source_Int)
+	model_params.ics = make(map[fem.Section_ID]f64)
 
 	for bnd_name, bnd_config in config_field.boundaries {
 		id, exists := mesh.boundary_names[bnd_name]
@@ -201,8 +203,40 @@ configure_conduction :: proc(cs: Config_Schema, mesh: fem.Mesh) -> (m: models.Mo
 					slice.fill(out.T_amb, info.ambient)
 				}
 			}
+		case "radiative":
+		    data := new(Radiative_Data)
+		    data.emissivity = property_get(f64, bnd_config, "emissivity") or_return
+		    data.ambient    = property_get(f64, bnd_config, "ambient_temp") or_return
+		    model_params.variational_bcs[id] = {
+		        data = data,
+		        procedure = proc(ctx: fem.Element_Context, start, end: int, current_time: f64, current_soln: []f64, data: rawptr, out: models.Conduction_BC) {
+		            info := cast(^Radiative_Data)data
+		            sigma :: 5.670374419e-8 // W/m^2·K^4
+		            for i in 0..<(end-start) {
+		                T     := current_soln[start + i]
+		                T_amb := info.ambient
+		                out.q[i]   = info.emissivity * sigma * (T_amb*T_amb*T_amb*T_amb - T*T*T*T)
+		                out.d_q[i] = -4 * info.emissivity * sigma * T*T*T
+		            }
+		        }
+		    }
 		case:
 			log.errorf("%s is not a recognized boundary for temperature.", bnd_type)
+		}
+	}
+
+	for section_name, ic_config in config_field.initial_conditions {
+		id, exists := mesh.section_names[section_name]
+		if !exists {
+			log.errorf("section %s is not declared on the mesh.", section_name); return {}, false
+		}
+
+		type := property_get(string, ic_config, "type") or_return
+		switch type{
+			case "constant":
+				model_params.ics[id] = property_get(f64, ic_config, "temperature") or_return
+			case:
+				log.errorf("%s is not a recognized initial condition type", type); return {}, false
 		}
 	}
 
@@ -273,6 +307,10 @@ configure_conduction :: proc(cs: Config_Schema, mesh: fem.Mesh) -> (m: models.Mo
 		ambient: f64,
 	}
 
+	Radiative_Data :: struct {
+    	emissivity: f64,
+    	ambient:    f64,
+	}
 
 
 	return model, true
