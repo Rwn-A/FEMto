@@ -75,6 +75,7 @@ blank_conduction_source :: proc(num_points: int, allocator := context.allocator)
 }
 
 blank_conduction_bc :: proc(num_points: int, allocator := context.allocator) -> Conduction_BC {
+	context.allocator = allocator
 	return {
 		q = make([]f64, num_points),
 		h = make([]f64, num_points),
