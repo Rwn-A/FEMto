@@ -166,7 +166,9 @@ solve_model :: proc(config: Solver_Config, model: ^Model, mesh: fem.Mesh) -> Sol
 		non_lin_iters: int
 		for {
 			non_lin_iters += 1
-			converged, iters, resid := la.sparse_cg_solve(J, du, R, config.linsolve_max_iter, config.linsolve_rtol)
+
+			// TODO: solver should be a config option 
+			converged, iters, resid := la.sparse_bicgstab_solve(J, du, R, config.linsolve_max_iter, config.linsolve_rtol)
 
 			if converged == false {
 				return {converged = false, reason = .Linear_Solver, final_resid = resid, final_iters = iters}

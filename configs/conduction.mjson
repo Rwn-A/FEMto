@@ -8,7 +8,7 @@ sections = {
             reference_conductivity = 50,
             reference_density = 7800,
             reference_specific_heat = 490,
-            conductivity_coefficient = 1,
+            conductivity_coefficient = 20,
             reference_temperature = 300,
         }
     }
@@ -17,7 +17,7 @@ fields = {
     temperature = {
         order = Linear,
         boundaries = {
-            "Gamma_left" = [{type = "isothermal", temperature=600}],
+            "Gamma_left" = [{type = "isothermal", temperature=300}],
             "Gamma_right" = [{type = "isothermal", temperature=1000 }],
         }
         initial_conditions = {
@@ -30,6 +30,10 @@ fields = {
 }
 
 
+transient = {
+    end = 100
+    timestep = 1
+}
 
 linear_solver = {
     rtol = 1e-5
