@@ -35,7 +35,7 @@ A text-based configuration system wraps a subset of its functionality to allow r
 
 ### Current Limitations
 - Linear solver is limited. We currently rely on conjugate gradient with no preconditioning. Complex problems will struggle.
-- Dirichlet boundaries currently do not time/space varying values yet.
+- Dirichlet boundaries currently do not support time/space varying values yet.
 - No way to read initial conditions in from a file from the config.
 - Limited built-in sources, BCs and materials other than plain constant ones.
 
@@ -71,7 +71,7 @@ model = Conduction // the rest of our config is now specific to a conduction sim
 // sections come from names on mesh entities, by breaking up your domain into multiple sections
 // in Gmsh you can have piece-wise constant mat props, sources and initial conditions
 sections = {
-    beam = { 
+    beam = {
         material = {
             type = "constant",
             conductivity = 50000, //unphysical just to treat the body as isothermal

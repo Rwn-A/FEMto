@@ -43,8 +43,7 @@ Conduction_BC_Int :: struct {
 	data: rawptr,
 }
 
-// out is safe to overwrite. out is only as big as `point_end` - `point_start` as not all facet quad points make up the boundary.
-// current solution is sized as normal.
+// out should be accumulated into not overwritten to allow multiple variatonal bc's per facet.
 Conduction_BC_Proc :: #type proc(ctx: fem.Element_Context, point_start, point_end: int, current_time: f64, current_soln: []f64, data: rawptr, out: Conduction_BC)
 
 Conduction_BC :: struct {
@@ -91,7 +90,7 @@ Conduction_Params :: struct {
 
 	materials: map[fem.Section_ID]Conduction_Material_Int,
 	sources: map[fem.Section_ID][]Conduction_Source_Int,
-	variational_bcs: map[fem.Boundary_ID]Conduction_BC_Int,
+	variational_bcs: map[fem.Boundary_ID][]Conduction_BC_Int,
 	ics: map[fem.Section_ID]f64, // TODO: should this be more dynamic? or handled by config
 
 	// state.
@@ -206,6 +205,7 @@ model_conduction :: proc(p: ^Conduction_Params) -> Model {
 
 				// sources
 				R.values[r_idx] += sources.Q[qp] * fem.basis_value(basis, quad, qp, test) * fem.dV(quad, qp)
+				
 				for trial in 0 ..< basis.arity {
 					grad_u := fem.basis_gradient(basis, quad, qp, trial)
 					u := fem.basis_value(basis, quad, qp, trial)
@@ -224,6 +224,7 @@ model_conduction :: proc(p: ^Conduction_Params) -> Model {
 					// mass (timestepping, reduces to 0 when not transient.)
 					M_ij := u * v * material.rho[qp] * material.cp[qp] * fem.dV(quad, qp)
 					R.values[r_idx] += -M_ij * (u_j - u_j_old) * dt_inv
+
 
 					M_ij_nonlinear := (u * v * (material.d_rho[qp] * material.cp[qp] * f64(int(tc.is_transient))) + material.rho[qp] * material.d_cp[qp]) * (u_j - u_j_old) * dt_inv * fem.dV(quad, qp)
 					J.values[j_idx] += M_ij * dt_inv - M_ij_nonlinear
@@ -250,11 +251,13 @@ model_conduction :: proc(p: ^Conduction_Params) -> Model {
 
 		for facet in bound_facets {
 			id := element.boundaries[facet].?
-			bc := params.variational_bcs[id] or_continue
+			bcs := params.variational_bcs[id] or_continue
 
 			start, end := fem.facet_quad(quad, facet)
 			bc_coeff := blank_conduction_bc(end - start)
-			bc.procedure(quad, start, end, tc.current_time, current_soln, bc.data, bc_coeff)
+			for bc in bcs {
+				bc.procedure(quad, start, end, tc.current_time, current_soln, bc.data, bc_coeff)
+			}
 
 			for qp in start..<end {
 				q := bc_coeff.q[qp - start]

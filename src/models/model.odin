@@ -131,10 +131,12 @@ solve_model :: proc(config: Solver_Config, model: ^Model, mesh: fem.Mesh) -> Sol
 
 	if tc.is_transient {
 		model->set_initial_conditions(layout, mesh, u_prev)
+		model->respect_constraints(layout, mesh, constraint_mask, u_prev, tc, context.allocator)
+		copy(u_k.values, u_prev.values)
 	}else{
 		model->set_initial_conditions(layout, mesh, u_k)
 	}
-	
+
 	for steps_taken := 0;; steps_taken += 1 {
 		loop_start := infra.ca_check(&ca)
 		defer infra.ca_rewind_to(&ca, loop_start)
@@ -190,7 +192,7 @@ solve_model :: proc(config: Solver_Config, model: ^Model, mesh: fem.Mesh) -> Sol
 
 			R_norm := la.nrm2(R)
 			if R_norm / R0_norm < config.non_linear_rtol {
-				log.debugf("Solution converged after %d iterations with final residual %f", non_lin_iters, R_norm)
+				log.debugf("Solution converged after %d iterations with final residual %f", non_lin_iters, R_norm / R0_norm)
 				break
 			}
 			if non_lin_iters >= config.non_linear_max_iter {

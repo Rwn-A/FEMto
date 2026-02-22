@@ -1,13 +1,15 @@
-name = "conduction_sim"
-mesh = "../meshes/cantilever.msh"
+name = "part_sim"
+mesh = "../meshes/line.msh"
 model = Conduction
 sections = {
-    beam = {
+    Omega  = {
         material = {
-            type = "constant",
-            conductivity = 50000,     // W/m·K, steel
-            density = 7800,        // kg/m^3
-            specific_heat = 490,   // J/kg·K
+            type = "linear",
+            reference_conductivity = 50,
+            reference_density = 7800,
+            reference_specific_heat = 490,
+            conductivity_coefficient = 1,
+            reference_temperature = 300,
         }
     }
 }
@@ -15,25 +17,27 @@ fields = {
     temperature = {
         order = Linear,
         boundaries = {
-            "constraint" = {type = "radiative", emissivity = 0.9, ambient_temp = 517},
-            "free" = {type = "radiative",emissivity = 0.9, ambient_temp = 517 }
+            "Gamma_left" = [{type = "isothermal", temperature=600}],
+            "Gamma_right" = [{type = "isothermal", temperature=1000 }],
         }
         initial_conditions = {
-            beam = {
+            Omega = {
                 type = "constant",
-                temperature = 400,
+                temperature = 300,
             }
         }
     }
 }
 
+
+
 linear_solver = {
-    rtol = 1e-6
+    rtol = 1e-5
     max_iterations = 5000
 }
 
 non_linear_solver = {
-    rtol = 1e-5
+    rtol = 1e-4
 }
 
 output = {

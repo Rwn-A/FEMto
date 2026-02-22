@@ -99,8 +99,8 @@ element_facet_dim :: #force_inline proc(parent_type: Element_Type) -> Dimension 
 	return Dimension(int(element_dim(parent_type)) - 1)
 }
 
-element_facet_tangents :: #force_inline proc(parent_type: Element_Type, facet: int) -> []Vec3 {
-	assert(parent_type != .Point && parent_type != .Line)
+element_facet_tangents :: #force_inline proc(parent_type: Element_Type, facet: int, loc := #caller_location) -> []Vec3 {
+	assert(parent_type != .Point && parent_type != .Line, loc = loc)
 	return REFERENCE_ELEMENTS[parent_type].facet_tangents[facet]
 }
 
@@ -173,6 +173,10 @@ compute_jacobian_context :: proc(ctx: Element_Context, point: int) -> (j: Mat3) 
 
 // Computes the jacobian of an individual facet of the element.
 compute_facet_jacobian :: proc(element: Element, parent_jacobian: Mat3, facet: int) -> (j: Mat3) {
+	if element.type == .Line {
+		j[0, 0] = 1
+		return
+	}
 	for tangent, i in element_facet_tangents(element.type, facet) {j[i] = parent_jacobian * tangent}
 	return j
 }
