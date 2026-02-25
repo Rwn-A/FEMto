@@ -45,8 +45,7 @@ infer_quadrature_rule :: proc(element: Element, max_basis_order: Order, domain: 
 		return .Quad_3 if domain == .Interior else .Facet_Quad_3
 	case required_order <= 5:
 		return .Quad_5 if domain == .Interior else .Facet_Quad_5
-	case:
-		panic("Simulation does not support accurate enough quadrature for the requested integrand.")
+	case: return .Quad_5
 	}
 }
 
