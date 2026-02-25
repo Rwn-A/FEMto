@@ -141,10 +141,10 @@ dense_idx :: proc(m: Dense_Matrix, row, col: int) -> int {
 }
 
 sparse_idx :: proc(sp: Sparsity, row, col: int) -> int {
-	for i in sp.row_ptrs[row] ..< sp.row_ptrs[row + 1] {
-		if sp.columns[i] == col {return i}
-	}
-	panic("Sparse matrix did not contain requested entry")
+	row_slice := sp.columns[sp.row_ptrs[row]:sp.row_ptrs[row + 1]]
+    idx, found := slice.binary_search(row_slice, col)
+    if !found do panic("Sparse matrix did not contain requested entry")
+    return sp.row_ptrs[row] + idx
 }
 
 vector_idx :: proc(v: Vector, idx: int) -> int {

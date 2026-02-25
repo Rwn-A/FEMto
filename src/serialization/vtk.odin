@@ -224,11 +224,13 @@ write_vtu :: proc(
 			for field in fields {geometry_required += field.geometry_required}
 
 			subcell, count := fem.subcell_for(element, viz_mesh.rule, geometry_required)
+			out := make([][MAX_OUTPUT_FIELD_COMPONENTS]f64, count)
+			defer delete(out)
 
-			for point in 0 ..< count {
-				for field, i in fields {
-					data := field.value_provider(subcell, point, field.data)
-					append(&point_data[i], ..(data[:field.components]))
+			for field, i in fields {
+				field.value_provider(subcell, field.data, out)
+				for &point in out {
+					append(&point_data[i], ..(point[:field.components]))
 				}
 			}
 		}

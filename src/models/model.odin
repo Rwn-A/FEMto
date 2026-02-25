@@ -383,28 +383,28 @@ field_to_output_field :: proc(
 	return {friendly_name = name, components = cmpnts, value_provider = fn, data = info, geometry_required = geo}
 }
 
-output_lagrange_scalar :: proc(ctx: fem.Element_Context, point: int, data: rawptr) -> (r: [fio.MAX_OUTPUT_FIELD_COMPONENTS]f64) {
+output_lagrange_scalar :: proc(ctx: fem.Element_Context, data: rawptr, out: [][fio.MAX_OUTPUT_FIELD_COMPONENTS]f64) {
 	info := cast(^Output_Field_Info)data
 
 	basis := fem.basis_create(fem.Basis_LS, ctx.element, info.order)
 
-	for i in 0 ..< basis.arity {
-		r[0] += fem.basis_value(basis, ctx, point, i) * info.data[info.layout.mapping[ctx.element.id][i]]
+	for point in 0..<len(ctx.points) {
+		for i in 0 ..< basis.arity {
+			out[point][0] += fem.basis_value(basis, ctx, point, i) * info.data[info.layout.mapping[ctx.element.id][i]]
+		}
 	}
-
-	return r
 }
 
 
-output_lagrange_vector :: proc(ctx: fem.Element_Context, point: int, data: rawptr) -> (r: [fio.MAX_OUTPUT_FIELD_COMPONENTS]f64) {
+output_lagrange_vector :: proc(ctx: fem.Element_Context, data: rawptr, out: [][fio.MAX_OUTPUT_FIELD_COMPONENTS]f64){
 	info := cast(^Output_Field_Info)data
 
 	basis := fem.basis_create(fem.Basis_LV, ctx.element, info.order)
 
-	for i in 0 ..< basis.arity {
-		v := fem.basis_value(basis, ctx, point, i) * info.data[info.layout.mapping[ctx.element.id][i]]
-		r[0] += v[0]; r[1] += v[1]; r[2] += v[2]
+	for point in 0..<len(ctx.points) {
+		for i in 0 ..< basis.arity {
+			v := fem.basis_value(basis, ctx, point, i) * info.data[info.layout.mapping[ctx.element.id][i]]
+			out[point][0] += v[0]; out[point][1] += v[1]; out[point][2] += v[2]
+		}
 	}
-
-	return r
 }

@@ -174,3 +174,4 @@ sparse_bicgstab_solve :: proc(
 
 	return false, max_iter, residual
 }
+

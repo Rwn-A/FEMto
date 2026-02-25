@@ -368,11 +368,13 @@ create_sparsity_from_layout :: proc(mesh: Mesh, test, trial: DOF_Layout, allocat
 	sp.columns = make([]int, sp.row_ptrs[rows])
 	pos := 0
 	for row in 0 ..< rows {
-		for col in row_cols[row] {
-			sp.columns[pos] = col
-			pos += 1
-		}
-	}
+    start := sp.row_ptrs[row]
+    for col in row_cols[row] {
+        sp.columns[pos] = col
+        pos += 1
+    }
+    slice.sort(sp.columns[start:sp.row_ptrs[row + 1]])
+}
 
 	return sp
 }

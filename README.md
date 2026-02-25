@@ -12,6 +12,12 @@ heat conduction and small-strain elasticity. With support for non-linear, time, 
 FEMto is designed to be small and simple, written in a plain procedural style without relying on third-party libraries.
 A text-based configuration system wraps a subset of its functionality to allow rapid experimentation and iteration.
 
+<p align="center">
+  <img src="./demo.png" alt="Demo Image" width="600"/>
+  <p align="center"><i>Von Mises effective stress on a cantilever beam under end loading.</i></p>
+</p>
+
+
 > [!NOTE]
 > The config interface is not intended to expose every feature of FEMto. To fully leverage its capabilities,
 > users can implement custom materials, sources, boundary conditions or even new PDEs directly in code.
@@ -27,6 +33,7 @@ A text-based configuration system wraps a subset of its functionality to allow r
 - 1st and 2nd order solution accuracy.
 
 ### Mesh Restrictions
+- For 3D, hexes and tets only for now.
 - Meshes should be well-behaved.
 - Every entity including domain entities needs a physical name.
 - **Version 2.2 Binary only**.
