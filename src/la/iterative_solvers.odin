@@ -74,13 +74,24 @@ sparse_bicgstab_solve :: proc(
 	iters: int,
 	residual: f64,
 ) {
+	context.allocator = allocator
+
 	n := len(x.values)
-	r     := block_vector_zero_clone(x)
+	r := block_vector_zero_clone(x)
 	r_hat := block_vector_zero_clone(x)
-	p     := block_vector_zero_clone(x)
-	v     := block_vector_zero_clone(x)
-	s     := block_vector_zero_clone(x)
-	t     := block_vector_zero_clone(x)
+	p := block_vector_zero_clone(x)
+	v := block_vector_zero_clone(x)
+	s := block_vector_zero_clone(x)
+	t := block_vector_zero_clone(x)
+
+	defer {
+		delete(r.values)
+		delete(r_hat.values)
+		delete(p.values)
+		delete(v.values)
+		delete(s.values)
+		delete(t.values)
+	}
 
 	copy(r.values, b.values)
 	gemv(A, x, r, a = -1.0, b = 1.0)
@@ -88,11 +99,13 @@ sparse_bicgstab_solve :: proc(
 	copy(r_hat.values, r.values)
 
 	b_norm := nrm2(b)
-	if b_norm < 1e-15 { b_norm = 1.0 }
+	if b_norm < 1e-15 {
+		return true, 0, 0.0
+	}
 
-	rho_old : f64 = 1.0
-	alpha   : f64 = 1.0
-	omega   : f64 = 1.0
+	rho_old: f64 = 1.0
+	alpha: f64 = 1.0
+	omega: f64 = 1.0
 
 
 	for iter := 0; iter < max_iter; iter += 1 {

@@ -7,9 +7,12 @@ Basis_LS :: struct {
 }
 Basis_LV :: distinct Basis_LS
 
+Basis_LS_Geometry :: Geometry_Options{.Jac_Inv}
+Basis_LV_Geometry :: Geometry_Options{.Jac_Inv}
+
 ls_create :: proc(element: Element, order: Order) -> Basis_LS {
 	raw := RAW_LAGRANGE_BASIS[element.type][order]
-	return {order = order, _support = raw.support, arity = raw.arity, geometry_required = {.Jac_Inv}, components = 1}
+	return {order = order, _support = raw.support, arity = raw.arity, geometry_required = Basis_LS_Geometry, components = 1}
 }
 
 lv_create :: proc(element: Element, order: Order) -> Basis_LV {
@@ -24,7 +27,7 @@ ls_value :: proc(ls: Basis_LS, ctx: Element_Context, point, basis: int) -> f64 {
 }
 
 ls_gradient :: proc(ls: Basis_LS, ctx: Element_Context, point, basis: int) -> Vec3 {
-	return ctx.basis_lagrange_table[ls.order].gradients[point][basis] * ctx_inverse_jacobian(ctx, point)
+	return ctx_inverse_jacobian(ctx, point) * ctx.basis_lagrange_table[ls.order].gradients[point][basis]
 }
 
 lv_value :: proc(lv: Basis_LV, ctx: Element_Context, point, basis: int) -> (r: Vec3) {
@@ -36,13 +39,26 @@ lv_value :: proc(lv: Basis_LV, ctx: Element_Context, point, basis: int) -> (r: V
 lv_gradient :: proc(lv: Basis_LV, ctx: Element_Context, point, basis: int) -> (m: Mat3) {
 	sb, cmpnt := basis_decompose_component(lv, basis)
 
-	g := ls_gradient(cast(Basis_LS)lv, ctx, point, basis)
+	g := ls_gradient(cast(Basis_LS)lv, ctx, point, sb)
 
-	m[0, cmpnt] = g[0]
-	m[1, cmpnt] = g[1]
-	m[2, cmpnt] = g[2]
+	m[cmpnt, 0] = g[0]
+	m[cmpnt, 1] = g[1]
+	m[cmpnt, 2] = g[2]
 
 	return m
+}
+
+lv_sym_grad :: proc(lv: Basis_LV, ctx: Element_Context, point, basis: int) -> (g: Voigt6) {
+	m := lv_gradient(lv, ctx, point, basis)
+
+	g[0] = m[0, 0]
+	g[1] = m[1, 1]
+	g[2] = m[2, 2]
+
+	g[3] = (m[1, 2] + m[2, 1]) * 0.5
+	g[4] = (m[0, 2] + m[2, 0]) * 0.5
+	g[5] = (m[0, 1] + m[1, 0]) * 0.5
+	return g
 }
 
 // precomputed in ref space available to element context.
@@ -91,6 +107,7 @@ RAW_LAGRANGE_BASIS := [Element_Type][Order]Raw_Lagrange_Info {
 	.Quadrilateral = LAGRANGE_QUAD_BASIS,
 	.Triangle      = LAGRANGE_TRI_BASIS,
 	.Tetrahedron   = LAGRANGE_TET_BASIS,
+	.Hexahedron    = LAGRANGE_HEX_BASIS,
 }
 
 raw_lagrange_value :: proc(type: Element_Type, order: Order, idx: int, ref_point: Vec3) -> f64 {
@@ -338,20 +355,132 @@ LAGRANGE_TET_BASIS := [Order]Raw_Lagrange_Info {
 			case 3:
 				return l3 * (2 * l3 - 1), (4 * l3 - 1) * dl3
 			case 4:
-				return 4 * l0 * l1, 4 * (l0 * dl1 + l1 * dl0)
+				return 4 * l0 * l1, 4 * (l0 * dl1 + l1 * dl0) // edge 0-1 ✓ same
 			case 5:
-				return 4 * l0 * l2, 4 * (l0 * dl2 + l2 * dl0)
+				return 4 * l1 * l2, 4 * (l1 * dl2 + l2 * dl1) // edge 1-2 (was case 7)
 			case 6:
-				return 4 * l0 * l3, 4 * (l0 * dl3 + l3 * dl0)
+				return 4 * l0 * l2, 4 * (l0 * dl2 + l2 * dl0) // edge 0-2 (was case 5)
 			case 7:
-				return 4 * l1 * l2, 4 * (l1 * dl2 + l2 * dl1)
+				return 4 * l0 * l3, 4 * (l0 * dl3 + l3 * dl0) // edge 0-3 (was case 6)
 			case 8:
-				return 4 * l1 * l3, 4 * (l1 * dl3 + l3 * dl1)
+				return 4 * l1 * l3, 4 * (l1 * dl3 + l3 * dl1) // edge 1-3 (was case 8) ✓ same
 			case 9:
-				return 4 * l2 * l3, 4 * (l2 * dl3 + l3 * dl2)
+				return 4 * l2 * l3, 4 * (l2 * dl3 + l3 * dl2) // edge 2-3 ✓ same
 			case:
 				unreachable()
 			}
+		},
+	},
+}
+
+@(rodata)
+LAGRANGE_HEX_BASIS := [Order]Raw_Lagrange_Info {
+	.Linear = {
+		support = {
+			{.D0, 0, 0, 1},
+			{.D0, 1, 0, 1},
+			{.D0, 2, 0, 1},
+			{.D0, 3, 0, 1},
+			{.D0, 4, 0, 1},
+			{.D0, 5, 0, 1},
+			{.D0, 6, 0, 1},
+			{.D0, 7, 0, 1},
+		},
+		arity = 8,
+		reference_data = proc(idx: int, r: Vec3) -> (val: f64, grad: Vec3) {
+			sx := [8]f64{-1, 1, 1, -1, -1, 1, 1, -1}
+			sy := [8]f64{-1, -1, 1, 1, -1, -1, 1, 1}
+			sz := [8]f64{-1, -1, -1, -1, 1, 1, 1, 1}
+
+			xi := sx[idx]
+			eta := sy[idx]
+			zeta := sz[idx]
+
+			fx := 1 + xi * r.x
+			fy := 1 + eta * r.y
+			fz := 1 + zeta * r.z
+
+			val = fx * fy * fz * 0.125
+			grad = Vec3{xi * fy * fz * 0.125, eta * fx * fz * 0.125, zeta * fx * fy * 0.125}
+			return
+		},
+	},
+	.Quadratic = {
+		support = {
+			{.D0, 0, 0, 1},
+			{.D0, 1, 0, 1},
+			{.D0, 2, 0, 1},
+			{.D0, 3, 0, 1},
+			{.D0, 4, 0, 1},
+			{.D0, 5, 0, 1},
+			{.D0, 6, 0, 1},
+			{.D0, 7, 0, 1},
+			{.D1, 0, 0, 1},
+			{.D1, 1, 0, 1},
+			{.D1, 2, 0, 1},
+			{.D1, 3, 0, 1},
+			{.D1, 4, 0, 1},
+			{.D1, 5, 0, 1},
+			{.D1, 6, 0, 1},
+			{.D1, 7, 0, 1},
+			{.D1, 8, 0, 1},
+			{.D1, 9, 0, 1},
+			{.D1, 10, 0, 1},
+			{.D1, 11, 0, 1},
+			{.D2, 0, 0, 1},
+			{.D2, 1, 0, 1},
+			{.D2, 2, 0, 1},
+			{.D2, 3, 0, 1},
+			{.D2, 4, 0, 1},
+			{.D2, 5, 0, 1},
+			{.D3, 0, 0, 1},
+		},
+		arity = 27,
+		reference_data = proc(idx: int, r: Vec3) -> (val: f64, grad: Vec3) {
+			node_to_tensor := [27]int {
+				0,
+				1,
+				4,
+				3,
+				9,
+				10,
+				13,
+				12,
+				2,
+				7,
+				5,
+				6,
+				11,
+				16,
+				14,
+				15,
+				18,
+				19,
+				22,
+				21,
+				8,
+				17,
+				20,
+				23,
+				24,
+				25,
+				26,
+			}
+			t := node_to_tensor[idx]
+			ix := t % 3
+			iy := (t / 3) % 3
+			iz := (t / 9) % 3
+
+			Lx := [3]f64{0.5 * r.x * (r.x - 1), 0.5 * r.x * (r.x + 1), 1 - r.x * r.x}
+			dLx := [3]f64{r.x - 0.5, r.x + 0.5, -2 * r.x}
+			Ly := [3]f64{0.5 * r.y * (r.y - 1), 0.5 * r.y * (r.y + 1), 1 - r.y * r.y}
+			dLy := [3]f64{r.y - 0.5, r.y + 0.5, -2 * r.y}
+			Lz := [3]f64{0.5 * r.z * (r.z - 1), 0.5 * r.z * (r.z + 1), 1 - r.z * r.z}
+			dLz := [3]f64{r.z - 0.5, r.z + 0.5, -2 * r.z}
+
+			val = Lx[ix] * Ly[iy] * Lz[iz]
+			grad = Vec3{dLx[ix] * Ly[iy] * Lz[iz], Lx[ix] * dLy[iy] * Lz[iz], Lx[ix] * Ly[iy] * dLz[iz]}
+			return
 		},
 	},
 }

@@ -7,15 +7,14 @@ Finite element method simulation written completely from scratch in Odin.
 
 ## Overview
 FEMto is a finite element solver designed to solve partial differential equations representing common physics. Currently, it focuses on
-heat conduction, including nonlinear effects such as temperature-dependent materials and radiative boundaries,
-but the core library is ready for vector-valued and coupled PDEs.
+heat conduction and small-strain elasticity. With support for non-linear, time, and space dependant properties.
 
 FEMto is designed to be small and simple, written in a plain procedural style without relying on third-party libraries.
 A text-based configuration system wraps a subset of its functionality to allow rapid experimentation and iteration.
 
 > [!NOTE]
 > The config interface is not intended to expose every feature of FEMto. To fully leverage its capabilities,
-> users can implement custom materials, sources, or boundary conditions directly in code.
+> users can implement custom materials, sources, boundary conditions or even new PDEs directly in code.
 
 
 ## Features
@@ -28,16 +27,18 @@ A text-based configuration system wraps a subset of its functionality to allow r
 - 1st and 2nd order solution accuracy.
 
 ### Mesh Restrictions
-- Only tetrahedrons for 3D so far.
 - Meshes should be well-behaved.
 - Every entity including domain entities needs a physical name.
 - **Version 2.2 Binary only**.
 
 ### Current Limitations
-- Linear solver is limited. We currently rely on conjugate gradient with no preconditioning. Complex problems will struggle.
+- Linear solver is limited. We currently rely on bi-conjugate gradient stabilized with no preconditioner.
 - Dirichlet boundaries currently do not support time/space varying values yet.
 - No way to read initial conditions in from a file from the config.
-- Limited built-in sources, BCs and materials other than plain constant ones.
+- Limited built-in sources and materials other than plain constant and linear ones.
+
+## Validation
+Nothing yet, mostly qualitative checks. Elasticity matches euler-bernoulli theory for cantilever beams.
 
 
 ## Quickstart
@@ -62,67 +63,43 @@ Other than `src/fe_core/layout.odin`, all of this code is method-agnostic CG, DG
 ## Configuration
 Configuration is unstable while development is ongoing. At the time of writing the below example should be a good place to start.
 ```
-name = "conduction_sim" //name is just for output files
-
-mesh = "../meshes/cantilever.msh" // relative to config file
-
-model = Conduction // the rest of our config is now specific to a conduction simulation
-
-// sections come from names on mesh entities, by breaking up your domain into multiple sections
-// in Gmsh you can have piece-wise constant mat props, sources and initial conditions
+name = "part_elastic"
+mesh = "../meshes/cantilever_structured.msh"
+model = Elasticity
 sections = {
     beam = {
         material = {
             type = "constant",
-            conductivity = 50000, //unphysical just to treat the body as isothermal
-            density = 7800,
-            specific_heat = 490,
+            elastic_modulus = 2e11,
+            poissons_ratio = 0.3,
         }
+        sources = [
+        ]
     }
 }
-
 fields = {
-    temperature = {
-        order = Linear, // solution order
+    displacement = {
+        order = Linear,
         boundaries = {
-            // the name comes from the mesh, could be anything "chicken" = {type = ...}
-            "constraint" = {type = "radiative", emissivity = 0.9, ambient_temp = 517},
-            "free" = {type = "radiative",emissivity = 0.9, ambient_temp = 517 }
-        }
-        initial_conditions = {
-            // heres the section name again.
-            beam = {
-                type = "constant",
-                temperature = 400,
-            }
+            "end_left" = [{type = "fixed", displacement=[0, 0, 0]}],
+            "end_right" = [{type = "traction", traction = [0, 0, 2e6]}]
         }
     }
 }
 
-
-output = {
-    directory = "../output",
-    frequency = 1, // only meaningful for transient simulations, how often to output results
-}
-
-// optional
-transient = {
-    end = 100 // 100 units
-    timestep = 1, // 1 unit at a time
-    //start = xxx can also define a start time
-}
-
-// optional
 linear_solver = {
-    rtol = 1e-6
+    rtol = 1e-4
     max_iterations = 5000
 }
 
-// optional
 non_linear_solver = {
-    rtol = 1e-5
+    rtol = 1e-3
 }
 
+output = {
+    directory = "../output",
+    frequency = 1,
+}
 ```
 
 ## Contributions

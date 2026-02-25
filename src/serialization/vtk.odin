@@ -27,6 +27,7 @@ VTK_Element_Type :: enum u8 {
 	Triangle      = 5,
 	Quadrilateral = 9,
 	Tetrahedron   = 10,
+	Hexahedron    = 12,
 }
 
 @(rodata)
@@ -36,6 +37,7 @@ VTK_ELEMENT_TYPE_FROM_NATIVE := [fem.Element_Type]VTK_Element_Type {
 	.Triangle      = .Triangle,
 	.Quadrilateral = .Quadrilateral,
 	.Tetrahedron   = .Tetrahedron,
+	.Hexahedron    = .Hexahedron,
 }
 
 vtk_create_visualization_mesh :: proc(mesh: fem.Mesh, rule: fem.Subcell_Rule, allocator := context.allocator) -> VTK_Raw_Mesh {
@@ -270,11 +272,7 @@ write_pvd :: proc(path: string, vtk_files: []string, times: []f64) -> os2.Error 
 
 	fmt.wprintln(xml_w.w, "<?xml version=\"1.0\"?>")
 
-	xml_open_tag(
-		&xml_w,
-		.VTKFile,
-		{{"type", "Collection"}, {"version", "0.1"}, {"byte_order", "LittleEndian"}},
-	)
+	xml_open_tag(&xml_w, .VTKFile, {{"type", "Collection"}, {"version", "0.1"}, {"byte_order", "LittleEndian"}})
 	defer xml_close_tag(&xml_w)
 
 	xml_open_tag(&xml_w, .Collection)
@@ -283,11 +281,7 @@ write_pvd :: proc(path: string, vtk_files: []string, times: []f64) -> os2.Error 
 	for entry in soa_zip(vtk_file = vtk_files, time = times) {
 		b: [32]u8
 		time_str := strconv.write_float(b[:], entry.time, 'f', 8, 64)
-		xml_open_tag(
-			&xml_w,
-			.DataSet,
-			{{"timestep", time_str}, {"group", ""}, {"part", "0"}, {"file", entry.vtk_file}},
-		)
+		xml_open_tag(&xml_w, .DataSet, {{"timestep", time_str}, {"group", ""}, {"part", "0"}, {"file", entry.vtk_file}})
 		xml_close_tag(&xml_w)
 	}
 

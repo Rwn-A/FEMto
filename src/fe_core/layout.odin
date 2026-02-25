@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: MIT
 package fem
 
+import "core:log"
 import "core:mem"
 import "core:slice"
 
@@ -217,10 +218,19 @@ basis_info_from_fd :: proc(fd: Field_Descriptor, element: Element) -> Basis_Info
 
 
 create_dof_layout :: proc(mesh: Mesh, fd: Field_Descriptor, allocator := context.allocator) -> (layout: DOF_Layout) {
-	orient_edge_dof :: proc(element: Mesh_Element, support: Basis_Support) -> int {
+	// orient_edge_dof :: proc(element: Mesh_Element, support: Basis_Support) -> int {
+	// 	assert(support.entity_dim == .D1)
+	// 	if element.edge_orientation[support.entity_index] {return support.entity_basis_index}
+	// 	return support.entity_basis_arity - 1 - support.entity_basis_index
+	// }
+	orient_edge_dof :: proc(element: Mesh_Element, support: Basis_Support, components: int) -> int {
 		assert(support.entity_dim == .D1)
 		if element.edge_orientation[support.entity_index] {return support.entity_basis_index}
-		return support.entity_basis_arity - 1 - support.entity_basis_index
+		scalar_arity := support.entity_basis_arity / components
+		scalar_index := support.entity_basis_index / components
+		cmpnt := support.entity_basis_index % components
+		reversed_scalar := scalar_arity - 1 - scalar_index
+		return reversed_scalar * components + cmpnt
 	}
 
 	assign_shared_dof :: proc(m: ^map[Key]int, key: Key, next_global: ^int) -> int {
@@ -272,11 +282,14 @@ create_dof_layout :: proc(mesh: Mesh, fd: Field_Descriptor, allocator := context
 			case .D1:
 				global_dof^ = assign_shared_dof(
 					&edge_map,
-					{conn[.D1][support.entity_index], orient_edge_dof(element, support)},
+					{conn[.D1][support.entity_index], orient_edge_dof(element, support, b.components)},
 					&next_global,
 				)
 			case .D2:
-				assert(support.entity_basis_arity <= 1, "Basis with multiple face supported dofs are currently unimplemented.")
+				assert(
+					support.entity_basis_arity <= (b.components),
+					"Basis with multiple face supported dofs are currently unimplemented.",
+				)
 				global_dof^ = assign_shared_dof(
 					&face_map,
 					{conn[.D2][support.entity_index], support.entity_basis_index},
@@ -318,6 +331,7 @@ create_boundary_dof_map :: proc(
 			if id not_in tmp {tmp[id] = make([dynamic]Boundary_DOF)}
 			for dof in 0 ..< basis.arity {
 				support := basis_support(basis, dof)
+				if support.entity_dim == element_dim(element.type) {continue}
 				if !element_entity_on_facet(element.type, facet_index, support.entity_dim, support.entity_index) {continue}
 				bnd_dof: Boundary_DOF = {
 					local   = dof,

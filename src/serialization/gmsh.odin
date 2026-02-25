@@ -55,9 +55,11 @@ Gmsh_Element_Type :: enum {
 	MSH_TRIANGLE_3 = 2,
 	MSH_TRIANGLE_6 = 9,
 	MSH_QUAD_4     = 3,
-	MSH_QUAD_9     = 16,
+	MSH_QUAD_9     = 10,
 	MSH_TETRA_4    = 4,
 	MSH_TETRA_10   = 11,
+	MSH_HEX_8      = 5,
+	MSH_HEX_27     = 12,
 	MSH_POINT      = 15,
 }
 
@@ -71,6 +73,8 @@ GMSH_ELEMENT_NUM_NODES := #sparse[Gmsh_Element_Type]int {
 	.MSH_QUAD_9     = 9,
 	.MSH_TETRA_4    = 4,
 	.MSH_TETRA_10   = 10,
+	.MSH_HEX_8      = 8,
+	.MSH_HEX_27     = 27,
 	.MSH_POINT      = 1,
 }
 
@@ -85,6 +89,8 @@ SUPPORTED_ELEMENTS :: bit_set[Gmsh_Element_Type] {
 	.MSH_QUAD_9,
 	.MSH_TETRA_4,
 	.MSH_TETRA_10,
+	.MSH_HEX_8,
+	.MSH_HEX_27,
 	.MSH_POINT,
 }
 
@@ -115,6 +121,10 @@ gmsh_type_to_element_info :: proc(type: Gmsh_Element_Type) -> (fem.Element_Type,
 		return .Tetrahedron, .Linear
 	case .MSH_TETRA_10:
 		return .Tetrahedron, .Quadratic
+	case .MSH_HEX_8:
+		return .Hexahedron, .Linear
+	case .MSH_HEX_27:
+		return .Hexahedron, .Quadratic
 	case .MSH_POINT:
 		return .Point, .Linear
 	case:
@@ -294,7 +304,8 @@ gmsh_parse :: proc(
 			c1 := linalg.length(el.nodes[0] - el.nodes[1] - (el.nodes[2] - el.nodes[3])) < ALIGNMENT_TOLERANCE
 			c2 := linalg.length(el.nodes[2] - el.nodes[1] - (el.nodes[3] - el.nodes[0])) < ALIGNMENT_TOLERANCE
 			return c1 && c2
-
+		case .Hexahedron:
+			return false // TODO: perform the check for an affine hex
 		}
 		return true
 	}

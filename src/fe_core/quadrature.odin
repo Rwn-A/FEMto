@@ -9,11 +9,13 @@ import "core:log"
 Quadrature_Rule :: enum {
 	Quad_1,
 	Quad_3,
+	Quad_5,
 	Facet_Quad_1,
 	Facet_Quad_3,
+	Facet_Quad_5,
 }
 
-Facet_Rules :: bit_set[Quadrature_Rule]{.Facet_Quad_1, .Facet_Quad_3}
+Facet_Rules :: bit_set[Quadrature_Rule]{.Facet_Quad_1, .Facet_Quad_3, .Facet_Quad_5}
 
 QUADRATURE_RULE_TO_CTX_ID := [Element_Type][Quadrature_Rule]Ref_Context_ID{}
 
@@ -41,6 +43,8 @@ infer_quadrature_rule :: proc(element: Element, max_basis_order: Order, domain: 
 		return .Quad_1 if domain == .Interior else .Facet_Quad_1
 	case required_order <= 3:
 		return .Quad_3 if domain == .Interior else .Facet_Quad_3
+	case required_order <= 5:
+		return .Quad_5 if domain == .Interior else .Facet_Quad_5
 	case:
 		panic("Simulation does not support accurate enough quadrature for the requested integrand.")
 	}
@@ -65,14 +69,15 @@ quadrature_for :: proc(
 	return qctx, len(qctx.weights)
 }
 
-// TODO: quadrature needs to ensure facet indices are ordered, and we can probably cache start, end.
+// TODO: quadrature needs to ensure facet indices are ordered, and we can proably cache start, end.
 facet_quad :: proc(qctx: Quadrature_Context, facet: int) -> (start: int, end: int) {
 	start = -1
+	end = -1
 	for facet_index, i in qctx.facet_indices {
-		if facet_index == facet {start = i}
-		if start != -1 && facet_index != facet {end = i}
+		if facet_index == facet && start == -1 {start = i}
+		if start != -1 && facet_index != facet {end = i; break}
 	}
-	if end == 0 {end = len(qctx.facet_indices)}
+	if end == -1 {end = len(qctx.facet_indices)}
 	return start, end
 }
 
@@ -110,6 +115,8 @@ setup_quadrature_rules :: proc(allocator := context.allocator) {
 					volume_rule = .Quad_1
 				case .Facet_Quad_3:
 					volume_rule = .Quad_3
+				case .Facet_Quad_5:
+					volume_rule = .Quad_5
 				case:
 					unreachable()
 				}
@@ -147,6 +154,7 @@ QUADRATURE_RULES := #partial [Element_Type][Quadrature_Rule]Quadrature_Rule_Tabl
 	.Triangle      = TRIANGLE_QUADRATURE,
 	.Quadrilateral = QUADRILATERAL_QUADRATURE,
 	.Tetrahedron   = TETRAHEDRON_QUADRATURE,
+	.Hexahedron    = HEXAHEDRON_QUADRATURE,
 }
 
 
@@ -156,11 +164,13 @@ REC_ROOT_3 :: 1 / math.SQRT_THREE
 POINT_QUADRATURE :: #partial [Quadrature_Rule]Quadrature_Rule_Table {
 	.Quad_1 = {points = {{0, 0, 0}}, weights = {1}},
 	.Quad_3 = {points = {{0, 0, 0}}, weights = {1}},
+	.Quad_5 = {points = {{0, 0, 0}}, weights = {1}},
 }
 
 LINE_QUADRATURE :: #partial [Quadrature_Rule]Quadrature_Rule_Table {
 	.Quad_1 = {points = {{0, 0, 0}}, weights = {2}},
 	.Quad_3 = {points = {{-REC_ROOT_3, 0, 0}, {REC_ROOT_3, 0, 0}}, weights = {1, 1}},
+	.Quad_5 = {points = {{-ROOT_3_5, 0, 0}, {0, 0, 0}, {ROOT_3_5, 0, 0}}, weights = {5 / 9, 8 / 9, 5 / 9}},
 }
 
 QUADRILATERAL_QUADRATURE :: #partial [Quadrature_Rule]Quadrature_Rule_Table {
@@ -174,6 +184,20 @@ QUADRILATERAL_QUADRATURE :: #partial [Quadrature_Rule]Quadrature_Rule_Table {
 		},
 		weights = {1, 1, 1, 1},
 	},
+	.Quad_5 = {
+		points = {
+			{-ROOT_3_5, -ROOT_3_5, 0},
+			{0., -ROOT_3_5, 0},
+			{ROOT_3_5, -ROOT_3_5, 0},
+			{-ROOT_3_5, 0., 0},
+			{0., 0., 0},
+			{ROOT_3_5, 0., 0},
+			{-ROOT_3_5, ROOT_3_5, 0},
+			{0., ROOT_3_5, 0},
+			{ROOT_3_5, ROOT_3_5, 0},
+		},
+		weights = {25. / 81., 40. / 81., 25. / 81., 40. / 81., 64. / 81., 40. / 81., 25. / 81., 40. / 81., 25. / 81.},
+	},
 }
 
 TRIANGLE_QUADRATURE :: #partial [Quadrature_Rule]Quadrature_Rule_Table {
@@ -181,6 +205,24 @@ TRIANGLE_QUADRATURE :: #partial [Quadrature_Rule]Quadrature_Rule_Table {
 	.Quad_3 = {
 		points = {{1.0 / 6.0, 1.0 / 6.0, 0}, {2.0 / 3.0, 1.0 / 6.0, 0}, {1.0 / 6.0, 2.0 / 3.0, 0}},
 		weights = {1.0 / 6.0, 1.0 / 6.0, 1.0 / 6.0},
+	},
+	.Quad_5 = {
+		points = {
+			{0.091576213509771, 0.091576213509771, 0},
+			{0.816847572980459, 0.091576213509771, 0},
+			{0.091576213509771, 0.816847572980459, 0},
+			{0.445948490915965, 0.108103018168070, 0},
+			{0.108103018168070, 0.445948490915965, 0},
+			{0.445948490915965, 0.445948490915965, 0},
+		},
+		weights = {
+			0.054975871827661,
+			0.054975871827661,
+			0.054975871827661,
+			0.111690794839005,
+			0.111690794839005,
+			0.111690794839005,
+		},
 	},
 }
 
@@ -194,5 +236,118 @@ TETRAHEDRON_QUADRATURE :: #partial [Quadrature_Rule]Quadrature_Rule_Table {
 			{0.138196601125011, 0.138196601125011, 0.585410196624968},
 		},
 		weights = {1.0 / 24.0, 1.0 / 24.0, 1.0 / 24.0, 1.0 / 24.0},
+	},
+	.Quad_5 = {
+		points = {
+			{0.0927352503108912, 0.0927352503108912, 0.0927352503108912},
+			{0.7217942490673264, 0.0927352503108912, 0.0927352503108912},
+			{0.0927352503108912, 0.7217942490673264, 0.0927352503108912},
+			{0.0927352503108912, 0.0927352503108912, 0.7217942490673264},
+			{0.3108859192633006, 0.3108859192633006, 0.3108859192633006},
+			{0.0673422421100982, 0.3108859192633006, 0.3108859192633006},
+			{0.3108859192633006, 0.0673422421100982, 0.3108859192633006},
+			{0.3108859192633006, 0.3108859192633006, 0.0673422421100982},
+			{0.0455037041256495, 0.0455037041256495, 0.4544962958743505},
+			{0.0455037041256495, 0.4544962958743505, 0.0455037041256495},
+			{0.4544962958743505, 0.0455037041256495, 0.0455037041256495},
+			{0.4544962958743505, 0.4544962958743505, 0.0455037041256495},
+			{0.4544962958743505, 0.0455037041256495, 0.4544962958743505},
+			{0.0455037041256495, 0.4544962958743505, 0.4544962958743505},
+		},
+		weights = {
+			0.01224884051939365,
+			0.01224884051939365,
+			0.01224884051939365,
+			0.01224884051939365,
+			0.01878132095300263,
+			0.01878132095300263,
+			0.01878132095300263,
+			0.01878132095300263,
+			0.00709100346284690,
+			0.00709100346284690,
+			0.00709100346284690,
+			0.00709100346284690,
+			0.00709100346284690,
+			0.00709100346284690,
+		},
+	},
+}
+
+ROOT_3_5 :: 0.7745966692414834
+
+HEXAHEDRON_QUADRATURE :: #partial [Quadrature_Rule]Quadrature_Rule_Table {
+	.Quad_1 = {points = {{0, 0, 0}}, weights = {8}},
+	.Quad_3 = {
+		points = {
+			{-REC_ROOT_3, -REC_ROOT_3, -REC_ROOT_3},
+			{REC_ROOT_3, -REC_ROOT_3, -REC_ROOT_3},
+			{REC_ROOT_3, REC_ROOT_3, -REC_ROOT_3},
+			{-REC_ROOT_3, REC_ROOT_3, -REC_ROOT_3},
+			{-REC_ROOT_3, -REC_ROOT_3, REC_ROOT_3},
+			{REC_ROOT_3, -REC_ROOT_3, REC_ROOT_3},
+			{REC_ROOT_3, REC_ROOT_3, REC_ROOT_3},
+			{-REC_ROOT_3, REC_ROOT_3, REC_ROOT_3},
+		},
+		weights = {1, 1, 1, 1, 1, 1, 1, 1},
+	},
+	.Quad_5 = {
+		points = {
+			{-ROOT_3_5, -ROOT_3_5, -ROOT_3_5},
+			{0., -ROOT_3_5, -ROOT_3_5},
+			{ROOT_3_5, -ROOT_3_5, -ROOT_3_5},
+			{-ROOT_3_5, 0., -ROOT_3_5},
+			{0., 0., -ROOT_3_5},
+			{ROOT_3_5, 0., -ROOT_3_5},
+			{-ROOT_3_5, ROOT_3_5, -ROOT_3_5},
+			{0., ROOT_3_5, -ROOT_3_5},
+			{ROOT_3_5, ROOT_3_5, -ROOT_3_5},
+			{-ROOT_3_5, -ROOT_3_5, 0.},
+			{0., -ROOT_3_5, 0.},
+			{ROOT_3_5, -ROOT_3_5, 0.},
+			{-ROOT_3_5, 0., 0.},
+			{0., 0., 0.},
+			{ROOT_3_5, 0., 0.},
+			{-ROOT_3_5, ROOT_3_5, 0.},
+			{0., ROOT_3_5, 0.},
+			{ROOT_3_5, ROOT_3_5, 0.},
+			{-ROOT_3_5, -ROOT_3_5, ROOT_3_5},
+			{0., -ROOT_3_5, ROOT_3_5},
+			{ROOT_3_5, -ROOT_3_5, ROOT_3_5},
+			{-ROOT_3_5, 0., ROOT_3_5},
+			{0., 0., ROOT_3_5},
+			{ROOT_3_5, 0., ROOT_3_5},
+			{-ROOT_3_5, ROOT_3_5, ROOT_3_5},
+			{0., ROOT_3_5, ROOT_3_5},
+			{ROOT_3_5, ROOT_3_5, ROOT_3_5},
+		},
+		weights = {
+			0.17146776,
+			0.27469136,
+			0.17146776,
+			0.27469136,
+			0.43209877,
+			0.27469136,
+			0.17146776,
+			0.27469136,
+			0.17146776,
+			0.27469136,
+			0.43209877,
+			0.27469136,
+			0.43209877,
+			0.68659221,
+			0.43209877,
+			0.27469136,
+			0.43209877,
+			0.27469136,
+			0.17146776,
+			0.27469136,
+			0.17146776,
+			0.27469136,
+			0.43209877,
+			0.27469136,
+			0.17146776,
+			0.27469136,
+			0.17146776,
+		},
 	},
 }

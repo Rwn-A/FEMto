@@ -1,49 +1,46 @@
-name = "part_sim"
-mesh = "../meshes/line.msh"
+name = "conduction_quad"
+mesh = "../meshes/cantilever.msh"
 model = Conduction
 sections = {
-    Omega  = {
+    beam  = {
         material = {
-            type = "linear",
-            reference_conductivity = 50,
-            reference_density = 7800,
-            reference_specific_heat = 490,
-            conductivity_coefficient = 20,
-            reference_temperature = 300,
+            type = "constant",
+            conductivity = 10,
+            density = 1000,
+            specific_heat = 100,
         }
+        sources = [
+            
+        ]
     }
 }
 fields = {
     temperature = {
-        order = Linear,
+        order = Quadratic,
         boundaries = {
-            "Gamma_left" = [{type = "isothermal", temperature=300}],
-            "Gamma_right" = [{type = "isothermal", temperature=1000 }],
+            "constraint" = [{type = "isothermal", temperature=300}],
+            //"end_right"   = [{type = "isothermal", temperature=1000}],
+
         }
         initial_conditions = {
-            Omega = {
+            beam = {
                 type = "constant",
-                temperature = 300,
+                temperature = 100,
             }
         }
     }
 }
-
-
 transient = {
     end = 100
     timestep = 1
 }
-
 linear_solver = {
-    rtol = 1e-5
+    rtol = 1e-6
     max_iterations = 5000
 }
-
 non_linear_solver = {
     rtol = 1e-4
 }
-
 output = {
     directory = "../output",
     frequency = 1,

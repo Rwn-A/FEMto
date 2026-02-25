@@ -1,3 +1,5 @@
+// SPDX-FileCopyrightText: 2026 Rowan Apps
+// SPDX-License-Identifier: MIT
 package models
 
 import "core:slice"
@@ -49,18 +51,17 @@ Solve_Result :: struct {
 
 Model :: struct {
 	// arbitray model data
-	data:                rawptr,
+	data:                   rawptr,
 
 	// allocate a layout that is sized correctly for the pde to be solved.
 	// also return which global dofs are constrained.
-	define_layout:       proc(m: ^Model, mesh: fem.Mesh, allocator: mem.Allocator) -> (fem.Layout, fem.Constraint_Mask),
-
-	set_initial_conditions: proc(m: ^Model, layout: fem.Layout, mesh:fem.Mesh, initial_solution: la.Block_Vector),
+	define_layout:          proc(m: ^Model, mesh: fem.Mesh, allocator: mem.Allocator) -> (fem.Layout, fem.Constraint_Mask),
+	set_initial_conditions: proc(m: ^Model, layout: fem.Layout, mesh: fem.Mesh, initial_solution: la.Block_Vector),
 
 	// update the current iterate such that it respects the constrained dofs.
 	// mask is passed in to make it quicker to identify constrained dofs without duplicating work from `define_layout`.
 	// allocator is provided in the case a temporary allocation is needed to compute the constrained value.
-	respect_constraints: proc(
+	respect_constraints:    proc(
 		m: ^Model,
 		layout: fem.Layout,
 		mesh: fem.Mesh,
@@ -71,7 +72,7 @@ Model :: struct {
 	),
 
 	// layout is provided to READ from current iterate for non linear terms and to WRITE to R and J.
-	build_local_problem: proc(
+	build_local_problem:    proc(
 		m: ^Model,
 		layout: fem.Layout,
 		element: fem.Mesh_Element,
@@ -86,10 +87,11 @@ Model :: struct {
 	// model decides based on its configuration which fields to output.
 	// current iterate should be read to actually compute the field data for the global fields.
 	// append into output fields.
-	output_fields:       proc(
+	output_fields:          proc(
 		m: ^Model,
 		layout: fem.Layout,
 		current_iterate: la.Block_Vector,
+		tc: Time_Context,
 		output_fields: ^[dynamic]fio.Output_Field,
 	),
 }
@@ -124,7 +126,7 @@ solve_model :: proc(config: Solver_Config, model: ^Model, mesh: fem.Mesh) -> Sol
 	J := fem.layout_make_matrix(&layout) // working jacobian matrix
 	du := fem.layout_make_vec(&layout) // incremental update to u
 
-
+	log.infof("solving a system with %d degrees of freedom", len(u_k.values))
 
 	// time loop
 	tc := config.tc
@@ -133,7 +135,7 @@ solve_model :: proc(config: Solver_Config, model: ^Model, mesh: fem.Mesh) -> Sol
 		model->set_initial_conditions(layout, mesh, u_prev)
 		model->respect_constraints(layout, mesh, constraint_mask, u_prev, tc, context.allocator)
 		copy(u_k.values, u_prev.values)
-	}else{
+	} else {
 		model->set_initial_conditions(layout, mesh, u_k)
 	}
 
@@ -165,11 +167,13 @@ solve_model :: proc(config: Solver_Config, model: ^Model, mesh: fem.Mesh) -> Sol
 		// for purely linear problems this is a slightly unoptimal as we build R and J twice.
 		non_lin_iters: int
 		for {
+			if R0_norm < 1e-15 {
+				log.warn("Zero residual detected, indicates trivial solution.")
+				break
+			}
 			non_lin_iters += 1
-
-			// TODO: solver should be a config option 
+			// TODO: solver should be a config option
 			converged, iters, resid := la.sparse_bicgstab_solve(J, du, R, config.linsolve_max_iter, config.linsolve_rtol)
-
 			if converged == false {
 				return {converged = false, reason = .Linear_Solver, final_resid = resid, final_iters = iters}
 			} else {
@@ -214,7 +218,7 @@ solve_model :: proc(config: Solver_Config, model: ^Model, mesh: fem.Mesh) -> Sol
 		if (steps_taken + 1) % config.output.frequency == 0 {
 			output_field_buffer := make([dynamic]fio.Output_Field, 0, 16)
 
-			model->output_fields(layout, u_k, &output_field_buffer)
+			model->output_fields(layout, u_k, tc, &output_field_buffer)
 
 			filename := fmt.aprintf("%s_%d.vtu", config.output.prefix, steps_taken)
 			path, _ := os2.join_path({config.output.output_dir, filename}, context.allocator)
@@ -244,35 +248,6 @@ solve_model :: proc(config: Solver_Config, model: ^Model, mesh: fem.Mesh) -> Sol
 
 //TODO: consider moving this stuff into layout
 
-field_to_output_field :: proc(
-	layout: fem.Layout,
-	field: fem.Field_Handle,
-	u: la.Block_Vector,
-	name: string,
-) -> fio.Output_Field {
-	fd := layout.fds[field]
-
-
-	// TODO: this would be a mem leak if we werent using checkpoint allocator.
-	info := new(Output_Field_Info)
-
-	info.layout = layout.dof_layouts[field]
-	info.order = fd.order
-	info.data = la.block_vector_view(u, int(field))
-
-	cmpnts: int
-	fn: fio.Output_Proc
-	switch fd.family {
-	case .LS:
-		cmpnts = 1
-		fn = output_lagrange_scalar
-	case .LV:
-		cmpnts = 3
-		fn = output_lagrange_vector
-	}
-	return {friendly_name = name, components = cmpnts, value_provider = fn, data = info}
-}
-
 field_coeff :: #force_inline proc(
 	layout: fem.Layout,
 	field: fem.Field_Handle,
@@ -300,11 +275,6 @@ field_mark_constraints :: proc(
 	}
 }
 
-Output_Field_Info :: struct {
-	data:   []f64,
-	layout: fem.DOF_Layout,
-	order:  fem.Order,
-}
 
 evaluate_lagrange_scalar :: proc(
 	layout: fem.Layout,
@@ -314,8 +284,24 @@ evaluate_lagrange_scalar :: proc(
 	u: la.Block_Vector,
 	out: []f64,
 ) {
-	for pi in 0..<len(ctx.points) {
-		for dof in 0..<basis.arity {
+	for pi in 0 ..< len(ctx.points) {
+		for dof in 0 ..< basis.arity {
+			coeff := field_coeff(layout, field, u, ctx.element.id, dof)
+			out[pi] += fem.basis_value(basis, ctx, pi, dof) * coeff
+		}
+	}
+}
+
+evaluate_lagrange_vector :: proc(
+	layout: fem.Layout,
+	ctx: fem.Element_Context,
+	field: fem.Field_Handle,
+	basis: fem.Basis_LV,
+	u: la.Block_Vector,
+	out: []fem.Vec3,
+) {
+	for pi in 0 ..< len(ctx.points) {
+		for dof in 0 ..< basis.arity {
 			coeff := field_coeff(layout, field, u, ctx.element.id, dof)
 			out[pi] += fem.basis_value(basis, ctx, pi, dof) * coeff
 		}
@@ -330,12 +316,71 @@ evaluate_lagrange_scalar_gradient :: proc(
 	u: la.Block_Vector,
 	out: []fem.Vec3,
 ) {
-	for pi in 0..<len(ctx.points) {
-		for dof in 0..<basis.arity {
+	for pi in 0 ..< len(ctx.points) {
+		for dof in 0 ..< basis.arity {
 			coeff := field_coeff(layout, field, u, ctx.element.id, dof)
 			out[pi] += fem.basis_gradient(basis, ctx, pi, dof) * coeff
 		}
 	}
+}
+
+evaluate_symmetric_gradient :: proc(
+	layout: fem.Layout,
+	ctx: fem.Element_Context,
+	field: fem.Field_Handle,
+	basis: fem.Basis_LV,
+	u: la.Block_Vector,
+	out: []fem.Voigt6,
+) {
+	for pi in 0 ..< len(ctx.points) {
+		for dof in 0 ..< basis.arity {
+			coeff := field_coeff(layout, field, u, ctx.element.id, dof)
+			out[pi] += fem.basis_sym_grad(basis, ctx, pi, dof) * coeff
+		}
+	}
+}
+
+field_evaluate :: proc {
+	evaluate_lagrange_scalar,
+	evaluate_lagrange_vector,
+}
+
+Output_Field_Info :: struct {
+	data:   []f64,
+	layout: fem.DOF_Layout,
+	order:  fem.Order,
+}
+
+field_to_output_field :: proc(
+	layout: fem.Layout,
+	field: fem.Field_Handle,
+	u: la.Block_Vector,
+	name: string,
+) -> fio.Output_Field {
+	fd := layout.fds[field]
+
+
+	// TODO: this would be a mem leak if we werent using checkpoint allocator.
+	info := new(Output_Field_Info)
+
+	info.layout = layout.dof_layouts[field]
+	info.order = fd.order
+	info.data = la.block_vector_view(u, int(field))
+
+	cmpnts: int
+	fn: fio.Output_Proc
+	geo: fem.Geometry_Options
+	switch fd.family {
+	case .LS:
+		cmpnts = 1
+		fn = output_lagrange_scalar
+		geo = fem.Basis_LS_Geometry
+	case .LV:
+		cmpnts = 3
+		fn = output_lagrange_vector
+		geo = fem.Basis_LV_Geometry
+	}
+	return {friendly_name = name, components = cmpnts, value_provider = fn, data = info, geometry_required = geo}
 }
 
 output_lagrange_scalar :: proc(ctx: fem.Element_Context, point: int, data: rawptr) -> (r: [fio.MAX_OUTPUT_FIELD_COMPONENTS]f64) {

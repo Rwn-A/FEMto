@@ -1,9 +1,11 @@
+// SPDX-FileCopyrightText: 2026 Rowan Apps
+// SPDX-License-Identifier: MIT
 package models
 
 
+import "core:log"
 import "core:math/linalg"
 import "core:mem"
-import "core:log"
 
 import fem "../fe_core"
 import "../la"
@@ -13,38 +15,57 @@ import "core:slice"
 
 Conduction_Material_Int :: struct {
 	procedure: Conduction_Material_Proc,
-	data: rawptr,
+	data:      rawptr,
 }
 
 // out is safe to ovewrite, no need to accumulate.
-Conduction_Material_Proc :: #type proc(ctx: fem.Element_Context, current_time: f64, current_soln: []f64, data: rawptr, out: Conduction_Material)
+Conduction_Material_Proc :: #type proc(
+	ctx: fem.Element_Context,
+	current_time: f64,
+	current_soln: []f64,
+	data: rawptr,
+	out: Conduction_Material,
+)
 
 Conduction_Material :: struct {
-	k, rho, cp: []f64,
+	k, rho, cp:       []f64,
 	d_k, d_rho, d_cp: []f64, // derivatives w/ respect to T.
 }
 
 Conduction_Source_Int :: struct {
 	procedure: Conduction_Source_Proc,
-	data: rawptr,
+	data:      rawptr,
 }
 
 // NOTE: out is not to be overwritten but accumulated into, this allows multiple sources to contribute.
-Conduction_Source_Proc :: #type proc(ctx: fem.Element_Context, current_time: f64, current_soln: []f64, data: rawptr, out: Conduction_Source)
+Conduction_Source_Proc :: #type proc(
+	ctx: fem.Element_Context,
+	current_time: f64,
+	current_soln: []f64,
+	data: rawptr,
+	out: Conduction_Source,
+)
 
 Conduction_Source :: struct {
-	Q: []f64,
+	Q:   []f64,
 	d_Q: []f64, // derivatives w/ respect to T.
 }
 
 // specifically variatonial bc's, dirichlet is handled elsewhere.
 Conduction_BC_Int :: struct {
 	procedure: Conduction_BC_Proc,
-	data: rawptr,
+	data:      rawptr,
 }
 
 // out should be accumulated into not overwritten to allow multiple variatonal bc's per facet.
-Conduction_BC_Proc :: #type proc(ctx: fem.Element_Context, point_start, point_end: int, current_time: f64, current_soln: []f64, data: rawptr, out: Conduction_BC)
+Conduction_BC_Proc :: #type proc(
+	ctx: fem.Element_Context,
+	point_start, point_end: int,
+	current_time: f64,
+	current_soln: []f64,
+	data: rawptr,
+	out: Conduction_BC,
+)
 
 Conduction_BC :: struct {
 	q, h, T_amb: []f64,
@@ -60,17 +81,14 @@ blank_conduction_material :: proc(num_points: int, allocator := context.allocato
 		cp = make([]f64, num_points),
 		d_k = make([]f64, num_points),
 		d_rho = make([]f64, num_points),
-		d_cp = make([]f64, num_points)
+		d_cp = make([]f64, num_points),
 	}
 }
 
 
 blank_conduction_source :: proc(num_points: int, allocator := context.allocator) -> Conduction_Source {
 	context.allocator = allocator
-	return {
-		Q = make([]f64, num_points),
-		d_Q = make([]f64, num_points),
-	}
+	return {Q = make([]f64, num_points), d_Q = make([]f64, num_points)}
 }
 
 blank_conduction_bc :: proc(num_points: int, allocator := context.allocator) -> Conduction_BC {
@@ -87,11 +105,10 @@ blank_conduction_bc :: proc(num_points: int, allocator := context.allocator) -> 
 Conduction_Params :: struct {
 	soln_order:      fem.Order,
 	isothermal_bnds: map[fem.Boundary_ID]f64, // TODO: more dynamic dirichlet
-
-	materials: map[fem.Section_ID]Conduction_Material_Int,
-	sources: map[fem.Section_ID][]Conduction_Source_Int,
+	materials:       map[fem.Section_ID]Conduction_Material_Int,
+	sources:         map[fem.Section_ID][]Conduction_Source_Int,
 	variational_bcs: map[fem.Boundary_ID][]Conduction_BC_Int,
-	ics: map[fem.Section_ID]f64, // TODO: should this be more dynamic? or handled by config
+	ics:             map[fem.Section_ID]f64, // TODO: should this be more dynamic? or handled by config
 
 	// state.
 	temp_fh:         fem.Field_Handle,
@@ -148,7 +165,7 @@ model_conduction :: proc(p: ^Conduction_Params) -> Model {
 		for element in mesh.elements {
 			ic_val := params.ics[element.section] or_else 0
 
-			for local_dof in 0..<len(layout.dof_layouts[params.temp_fh].mapping[element.id]){
+			for local_dof in 0 ..< len(layout.dof_layouts[params.temp_fh].mapping[element.id]) {
 				global := fem.layout_global_pos(layout, params.temp_fh, element.id, local_dof)
 				initial_solution.values[global] = ic_val
 			}
@@ -182,7 +199,7 @@ model_conduction :: proc(p: ^Conduction_Params) -> Model {
 		material := blank_conduction_material(len(quad.points))
 		sources := blank_conduction_source(len(quad.points))
 
-		evaluate_lagrange_scalar(layout, quad, params.temp_fh, basis, current_iterate, current_soln)
+		field_evaluate(layout, quad, params.temp_fh, basis, current_iterate, current_soln)
 		evaluate_lagrange_scalar_gradient(layout, quad, params.temp_fh, basis, current_iterate, current_grad)
 		mat_int := params.materials[element.section]
 		mat_int.procedure(quad, tc.current_time, current_soln, mat_int.data, material)
@@ -204,8 +221,8 @@ model_conduction :: proc(p: ^Conduction_Params) -> Model {
 				r_idx := la.idx(R, int(params.temp_fh), test)
 
 				// sources
-				R.values[r_idx] += sources.Q[qp] * fem.basis_value(basis, quad, qp, test) * fem.dV(quad, qp)
-				
+				R.values[r_idx] += sources.Q[qp] * v * fem.dV(quad, qp)
+
 				for trial in 0 ..< basis.arity {
 					grad_u := fem.basis_gradient(basis, quad, qp, trial)
 					u := fem.basis_value(basis, quad, qp, trial)
@@ -226,7 +243,12 @@ model_conduction :: proc(p: ^Conduction_Params) -> Model {
 					R.values[r_idx] += -M_ij * (u_j - u_j_old) * dt_inv
 
 
-					M_ij_nonlinear := (u * v * (material.d_rho[qp] * material.cp[qp] * f64(int(tc.is_transient))) + material.rho[qp] * material.d_cp[qp]) * (u_j - u_j_old) * dt_inv * fem.dV(quad, qp)
+					M_ij_nonlinear :=
+						(u * v * (material.d_rho[qp] * material.cp[qp] * f64(int(tc.is_transient))) +
+							material.rho[qp] * material.d_cp[qp]) *
+						(u_j - u_j_old) *
+						dt_inv *
+						fem.dV(quad, qp)
 					J.values[j_idx] += M_ij * dt_inv - M_ij_nonlinear
 
 					// source terms (nonlinear part)
@@ -236,7 +258,7 @@ model_conduction :: proc(p: ^Conduction_Params) -> Model {
 		}
 
 		bound_facets := fem.boundary_set(element)
-		if bound_facets == {} {return} // conduction has no surface terms other than bc's.
+		if bound_facets == {} {return} 	// conduction has no surface terms other than bc's.
 
 		quad, count = fem.quadrature_for(
 			element,
@@ -259,21 +281,22 @@ model_conduction :: proc(p: ^Conduction_Params) -> Model {
 				bc.procedure(quad, start, end, tc.current_time, current_soln, bc.data, bc_coeff)
 			}
 
-			for qp in start..<end {
+			for qp in start ..< end {
 				q := bc_coeff.q[qp - start]
 				h := bc_coeff.h[qp - start]
 				T_amb := bc_coeff.T_amb[qp - start]
-				for test in 0..<basis.arity {
+				for test in 0 ..< basis.arity {
 					v := fem.basis_value(basis, quad, qp, test)
-			        R.values[la.idx(R, int(params.temp_fh), test)] += (q + h * T_amb - h * current_soln[qp]) * v * fem.dS(quad, qp)
-					for trial in 0..<basis.arity {
-						 u := fem.basis_value(basis, quad, qp, trial)
-						 j_idx := la.idx(J, int(params.temp_fh), int(params.temp_fh), test, trial)
-            			 J.values[j_idx] += h * u * v * fem.dS(quad, qp)
-            			 // non linear h
-            			 J.values[j_idx] += bc_coeff.d_h[qp-start] * (T_amb - current_soln[qp]) * u * v * fem.dS(quad, qp)
-					     // non linear q
-            			 J.values[j_idx] -= bc_coeff.d_q[qp-start] * u * v * fem.dS(quad, qp)
+					R.values[la.idx(R, int(params.temp_fh), test)] +=
+						(q + h * T_amb - h * current_soln[qp]) * v * fem.dS(quad, qp)
+					for trial in 0 ..< basis.arity {
+						u := fem.basis_value(basis, quad, qp, trial)
+						j_idx := la.idx(J, int(params.temp_fh), int(params.temp_fh), test, trial)
+						J.values[j_idx] += h * u * v * fem.dS(quad, qp)
+						// non linear h
+						J.values[j_idx] += bc_coeff.d_h[qp - start] * (T_amb - current_soln[qp]) * u * v * fem.dS(quad, qp)
+						// non linear q
+						J.values[j_idx] -= bc_coeff.d_q[qp - start] * u * v * fem.dS(quad, qp)
 					}
 				}
 			}
@@ -284,6 +307,7 @@ model_conduction :: proc(p: ^Conduction_Params) -> Model {
 		m: ^Model,
 		layout: fem.Layout,
 		current_iterate: la.Block_Vector,
+		tc: Time_Context,
 		output_fields: ^[dynamic]fio.Output_Field,
 	) {
 		params := cast(^Conduction_Params)m.data

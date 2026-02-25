@@ -30,6 +30,7 @@ Element_Type :: enum u8 {
 	Triangle,
 	Quadrilateral,
 	Tetrahedron,
+	Hexahedron,
 }
 
 Order :: enum u8 {
@@ -68,6 +69,7 @@ REFERENCE_ELEMENTS := [Element_Type]Reference_Element {
 	.Triangle      = REFERENCE_TRIANGLE,
 	.Quadrilateral = REFERENCE_QUADRILATERAL,
 	.Tetrahedron   = REFERENCE_TETRAHEDRON,
+	.Hexahedron    = REFERENCE_HEXAHEDRON,
 }
 
 // Topology (Decided to wrap in access functions in case of table changes or safety checks)
@@ -300,6 +302,23 @@ facet_reference_to_volume_reference :: proc(element_type: Element_Type, facet_po
 		case:
 			unreachable()
 		}
+	case .Hexahedron:
+		switch facet_index {
+		case 0:
+			return Vec3{facet_point.x, facet_point.y, -1}
+		case 1:
+			return Vec3{facet_point.x, facet_point.y, +1}
+		case 2:
+			return Vec3{facet_point.x, -1, facet_point.y}
+		case 3:
+			return Vec3{facet_point.x, +1, facet_point.y}
+		case 4:
+			return Vec3{-1, facet_point.x, facet_point.y}
+		case 5:
+			return Vec3{+1, facet_point.x, facet_point.y}
+		case:
+			unreachable()
+		}
 	case:
 		unreachable()
 	}
@@ -355,6 +374,52 @@ REFERENCE_TETRAHEDRON: Reference_Element : {
 			.D0 = {{0}, {1}, {2}, {3}},
 			.D1 = {{0, 1, 4}, {1, 2, 5}, {2, 0, 6}, {0, 3, 7}, {1, 3, 8}, {2, 3, 9}},
 			.D2 = {{0, 1, 2, 4, 5, 6}, {0, 1, 3, 4, 8, 7}, {1, 2, 3, 5, 9, 8}, {2, 0, 3, 6, 7, 9}},
+		},
+	},
+}
+
+REFERENCE_HEXAHEDRON: Reference_Element : {
+	dimension = .D3,
+	facet_element_types = {.Quadrilateral, .Quadrilateral, .Quadrilateral, .Quadrilateral, .Quadrilateral, .Quadrilateral},
+	facet_tangents = {
+		{{0, 1, 0}, {1, 0, 0}},
+		{{1, 0, 0}, {0, 1, 0}},
+		{{1, 0, 0}, {0, 0, 1}},
+		{{0, 0, 1}, {1, 0, 0}},
+		{{0, 0, 1}, {0, 1, 0}},
+		{{0, 1, 0}, {0, 0, 1}},
+	},
+	sub_entity_nodes = {
+		.Linear = #partial{
+			.D0 = {{0}, {1}, {2}, {3}, {4}, {5}, {6}, {7}},
+			.D1 = {{0, 1}, {1, 2}, {2, 3}, {3, 0}, {4, 5}, {5, 6}, {6, 7}, {7, 4}, {0, 4}, {1, 5}, {2, 6}, {3, 7}},
+			.D2 = {{0, 1, 2, 3}, {4, 5, 6, 7}, {0, 1, 5, 4}, {3, 2, 6, 7}, {0, 3, 7, 4}, {1, 2, 6, 5}},
+		},
+		.Quadratic = #partial{
+			.D0 = {{0}, {1}, {2}, {3}, {4}, {5}, {6}, {7}},
+			.D1 = {
+				{0, 1, 8},
+				{1, 2, 9},
+				{2, 3, 10},
+				{3, 0, 11},
+				{4, 5, 12},
+				{5, 6, 13},
+				{6, 7, 14},
+				{7, 4, 15},
+				{0, 4, 16},
+				{1, 5, 17},
+				{2, 6, 18},
+				{3, 7, 19},
+			},
+			.D2 = {
+				{0, 1, 2, 3, 8, 9, 10, 11, 20},
+				{4, 5, 6, 7, 12, 13, 14, 15, 21},
+				{0, 1, 5, 4, 8, 17, 12, 16, 22},
+				{3, 2, 6, 7, 10, 18, 14, 19, 23},
+				{0, 3, 7, 4, 11, 19, 15, 16, 24},
+				{1, 2, 6, 5, 9, 18, 13, 17, 25},
+			},
+			.D3 = {{0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26}},
 		},
 	},
 }

@@ -23,6 +23,7 @@ setup_subcell_rules :: proc(allocator := context.allocator) {
 		SUBCELL_RULE_TO_REF_ID[.Triangle][rule] = register_reference_context(.Triangle, TRIANGLE_SUBCELL[rule])
 		SUBCELL_RULE_TO_REF_ID[.Quadrilateral][rule] = register_reference_context(.Quadrilateral, QUADRILATERAL_SUBCELL[rule])
 		SUBCELL_RULE_TO_REF_ID[.Tetrahedron][rule] = register_reference_context(.Tetrahedron, TETRAHEDRON_SUBCELL[rule])
+		SUBCELL_RULE_TO_REF_ID[.Hexahedron][rule] = register_reference_context(.Hexahedron, HEXAHEDRON_SUBCELL[rule])
 
 	}
 }
@@ -82,6 +83,39 @@ TETRAHEDRON_SUBCELL := [Subcell_Rule][]Vec3 {
 	},
 }
 
+@(rodata)
+HEXAHEDRON_SUBCELL := [Subcell_Rule][]Vec3 {
+	.Split_Linear    = {{-1, -1, -1}, {1, -1, -1}, {1, 1, -1}, {-1, 1, -1}, {-1, -1, 1}, {1, -1, 1}, {1, 1, 1}, {-1, 1, 1}},
+	.Split_Quadratic = {
+		{-1, -1, -1},
+		{1, -1, -1},
+		{1, 1, -1},
+		{-1, 1, -1},
+		{-1, -1, 1},
+		{1, -1, 1},
+		{1, 1, 1},
+		{-1, 1, 1},
+		{0, -1, -1},
+		{1, 0, -1},
+		{0, 1, -1},
+		{-1, 0, -1},
+		{0, -1, 1},
+		{1, 0, 1},
+		{0, 1, 1},
+		{-1, 0, 1},
+		{-1, -1, 0},
+		{1, -1, 0},
+		{1, 1, 0},
+		{-1, 1, 0},
+		{0, 0, -1},
+		{0, 0, 1},
+		{0, -1, 0},
+		{0, 1, 0},
+		{-1, 0, 0},
+		{1, 0, 0},
+		{0, 0, 0},
+	},
+}
 
 SUBCELL_CONNECTIVITY := #partial [Element_Type][Subcell_Rule][][]int {
 	.Line = #partial{.Split_Linear = {{0, 1}}, .Split_Quadratic = {{0, 1}, {1, 2}}},
@@ -101,6 +135,19 @@ SUBCELL_CONNECTIVITY := #partial [Element_Type][Subcell_Rule][][]int {
 			{3, 4, 7, 8},
 			{1, 3, 6, 7},
 			{3, 6, 7, 8},
+		},
+	},
+	.Hexahedron = #partial{
+		.Split_Linear = {{0, 1, 2, 3, 4, 5, 6, 7}},
+		.Split_Quadratic = {
+			{0, 8, 20, 11, 16, 22, 26, 24},
+			{8, 1, 9, 20, 22, 17, 25, 26},
+			{11, 20, 10, 3, 24, 26, 23, 19},
+			{20, 9, 2, 10, 26, 25, 18, 23},
+			{16, 22, 26, 24, 4, 12, 21, 15},
+			{22, 17, 25, 26, 12, 5, 13, 21},
+			{24, 26, 23, 19, 15, 21, 14, 7},
+			{26, 25, 18, 23, 21, 13, 6, 14},
 		},
 	},
 }

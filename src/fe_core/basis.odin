@@ -49,7 +49,7 @@ basis_support :: proc(bi: Basis_Info, basis: int) -> Basis_Support {
 	return scalar_support
 }
 
-@(private)
+
 basis_decompose_component :: #force_inline proc(bi: Basis_Info, basis: int) -> (scalar_index, cmpnt: int) {
 	return basis / bi.components, basis % bi.components
 }
@@ -63,4 +63,8 @@ basis_value :: proc {
 basis_gradient :: proc {
 	ls_gradient,
 	lv_gradient,
+}
+
+basis_sym_grad :: proc {
+	lv_sym_grad,
 }

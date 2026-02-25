@@ -4,3 +4,5 @@ NOTES.md
 *.vtu
 output
 src_old
+*.pdb
+*.rdi
