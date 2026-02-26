@@ -10,7 +10,7 @@ sections = {
             specific_heat = 100,
         }
         sources = [
-            
+
         ]
     }
 }
@@ -34,6 +34,7 @@ transient = {
     end = 100
     timestep = 1
 }
+
 linear_solver = {
     rtol = 1e-6
     max_iterations = 5000

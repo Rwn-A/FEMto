@@ -26,7 +26,7 @@ A text-based configuration system wraps a subset of its functionality to allow r
 ## Features
 - 1D, 2D, 3D linear or curved geometries from [Gmsh](https://gmsh.info/).
 - Visualization via [Paraview](https://www.paraview.org/).
-- Steady-state and transient simulations.
+- Steady-state / transient conduction, steady state elasticity.
 - Text based config using a human-friendly JSON superset.
 - Support for time, space, and solution dependent material models, source terms and boundary conditions.
 - Non linear support via Newton *Picard-style supported through lagged values in the weak form.*
@@ -70,42 +70,52 @@ Other than `src/fe_core/layout.odin`, all of this code is method-agnostic CG, DG
 ## Configuration
 Configuration is unstable while development is ongoing. At the time of writing the below example should be a good place to start.
 ```
-name = "part_elastic"
-mesh = "../meshes/cantilever_structured.msh"
-model = Elasticity
+name = "part_elastic" // used for the output name
+mesh = "../meshes/cantilever_structured.msh" // mesh file
+model = Elasticity // physics we are solving, other option for now is Conduction
 sections = {
-    beam = {
+    beam = { // the name "beam" comes from a physical name applied to volume element(s) in your mesh
         material = {
             type = "constant",
             elastic_modulus = 2e11,
             poissons_ratio = 0.3,
+            density = 7750 // kg/m^3
         }
         sources = [
+            // empty in this case but for bending under its own weight we could do
+            // {type = "constant", load = [0, 0, -77500] }
         ]
     }
 }
 fields = {
     displacement = {
-        order = Linear,
+        order = Quadratic, // use Linear or Quadratic
         boundaries = {
-            "end_left" = [{type = "fixed", displacement=[0, 0, 0]}],
+            // the names here come from names of boundary entities defined in your mesh
+            "end_left" = [{type = "fixed", displacement=[0, 0, 0]}], // fix the displacement at 0, this is our cantilevers attachment point
+            //apply a traction to the end face, we know the end face in this mesh has area 0.05 x 0.05, so this traction works out to 5kN
             "end_right" = [{type = "traction", traction = [0, 0, 2e6]}]
         }
     }
 }
 
+// this section can be omitted and left as default
+// however, quadratic elements currently really stress the linear solver so relaxing tolerances is recommended for now.
 linear_solver = {
     rtol = 1e-4
     max_iterations = 5000
 }
 
+// our problem is linear, but we messed with the linear solver tolerance so the non linear solver may think the problem was
+// not truly solved. Eventually, this part of the config will be streamlined
 non_linear_solver = {
     rtol = 1e-3
 }
 
 output = {
     directory = "../output",
-    frequency = 1,
+    order = Quadratic, // what order to output at, reccomended to match your solution order
+    frequency = 1, // only applies to transient simulations, default is 1 can be omitted
 }
 ```
 

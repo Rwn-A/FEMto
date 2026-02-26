@@ -99,8 +99,8 @@ configure_elasticity :: proc(cs: Config_Schema, mesh: fem.Mesh) -> (m: models.Mo
 
 			E := property_get(f64, mat, "elastic_modulus") or_return
 			nu := property_get(f64, mat, "poissons_ratio") or_return
-
 			data.C = isotropic_constitutive_tensor(E, nu)
+			data.rho =  property_get(f64, mat, "density") or_return
 
 			model_params.materials[id] = {
 				data = data,
@@ -112,6 +112,7 @@ configure_elasticity :: proc(cs: Config_Schema, mesh: fem.Mesh) -> (m: models.Mo
 				) {
 					info := cast(^Constant_Material_Data)data
 					slice.fill(out.constitutive_tensor, info.C)
+					slice.fill(out.density, info.rho)
 					for qp in 0 ..< len(ctx.points) {
 						fem.voigt_gemv(info.C, current_strain[qp], &out.stress[qp], 1, 0)
 					}
@@ -170,6 +171,7 @@ configure_elasticity :: proc(cs: Config_Schema, mesh: fem.Mesh) -> (m: models.Mo
 
 	Constant_Material_Data :: struct {
 		C: fem.Voigt6x6,
+		rho: f64,
 	}
 
 	Constant_Source_Data :: struct {

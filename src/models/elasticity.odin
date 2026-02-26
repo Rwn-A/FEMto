@@ -37,6 +37,7 @@ Elastic_Material_Proc :: #type proc(
 Elastic_Material :: struct {
 	stress:              []fem.Voigt6,
 	constitutive_tensor: []fem.Voigt6x6,
+	density: []f64,
 }
 
 Elastic_Source_Int :: struct {
@@ -80,7 +81,7 @@ Elastic_BC :: struct {
 
 blank_elastic_material :: proc(num_points: int, allocator := context.allocator) -> Elastic_Material {
 	context.allocator = allocator
-	return {stress = make([]fem.Voigt6, num_points), constitutive_tensor = make([]fem.Voigt6x6, num_points)}
+	return {stress = make([]fem.Voigt6, num_points), constitutive_tensor = make([]fem.Voigt6x6, num_points), density = make([]f64, num_points)}
 }
 
 blank_elastic_source :: proc(num_points: int, allocator := context.allocator) -> Elastic_Source {
@@ -210,6 +211,8 @@ model_elasticity :: proc(p: ^Elasticity_Params) -> Model {
 			source_int.procedure(quad, tc.current_time, current_soln, source_int.data, sources)
 		}
 
+		dt_inv := (1 / tc.timestep) if tc.is_transient else 0 // zero if steady, 1/dt if transient
+
 		for qp in 0 ..< count {
 			stress := material.stress[qp]
 			C := material.constitutive_tensor[qp]
@@ -227,7 +230,11 @@ model_elasticity :: proc(p: ^Elasticity_Params) -> Model {
 				R.values[r_idx] += (linalg.dot(sources.F[qp], v) * fem.dV(quad, qp))
 
 				for trial in 0 ..< basis.arity {
+					u := fem.basis_value(basis, quad, qp, trial)
 					eps_u := to_engineering_shear(fem.basis_sym_grad(basis, quad, qp, trial))
+
+					u_j := field_coeff(layout, params.displ_fh, current_iterate, element.id, trial)
+					u_j_old := field_coeff(layout, params.displ_fh, previous_iterate, element.id, trial)
 
 					j_idx := la.idx(J, int(params.displ_fh), int(params.displ_fh), test, trial)
 
@@ -235,7 +242,7 @@ model_elasticity :: proc(p: ^Elasticity_Params) -> Model {
 					fem.voigt_gemv(C, eps_u, &C_eps_u, 1, 0)
 					J_ij := fem.voigt_dot(eps_v, C_eps_u) * fem.dV(quad, qp)
 
-					J.values[j_idx] += J_ij
+					J.values[j_idx] += J_ij 
 				}
 			}
 		}
