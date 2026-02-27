@@ -8,7 +8,7 @@ import "core:encoding/base64"
 import "core:fmt"
 import "core:io"
 import "core:mem"
-import "core:os/os2"
+import "core:os"
 import "core:strconv"
 
 import fem "../fe_core"
@@ -124,15 +124,15 @@ write_vtu :: proc(
 	fields: []Output_Field,
 	allocator := context.allocator,
 ) -> (
-	err: os2.Error,
+	err: os.Error,
 ) {
 	context.allocator = allocator
 
 	xml_w: XML_Writer
-	fd := os2.open(path, {.Read, .Write, .Create, .Trunc}) or_return
-	defer os2.close(fd)
+	fd := os.open(path, {.Read, .Write, .Create, .Trunc}) or_return
+	defer os.close(fd)
 
-	xml_w.w = io.to_writer(os2.to_writer(fd))
+	xml_w.w = io.to_writer(os.to_writer(fd))
 
 	fmt.wprintln(xml_w.w, "<?xml version=\"1.0\"?>")
 
@@ -265,12 +265,12 @@ write_vtu :: proc(
 	return nil
 }
 
-write_pvd :: proc(path: string, vtk_files: []string, times: []f64) -> os2.Error {
+write_pvd :: proc(path: string, vtk_files: []string, times: []f64) -> os.Error {
 	xml_w: XML_Writer
-	fd := os2.open(path, {.Read, .Write, .Create, .Trunc}) or_return
-	defer os2.close(fd)
+	fd := os.open(path, {.Read, .Write, .Create, .Trunc}) or_return
+	defer os.close(fd)
 
-	xml_w.w = io.to_writer(os2.to_writer(fd))
+	xml_w.w = io.to_writer(os.to_writer(fd))
 
 	fmt.wprintln(xml_w.w, "<?xml version=\"1.0\"?>")
 

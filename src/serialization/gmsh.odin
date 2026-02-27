@@ -18,7 +18,7 @@ import "core:io"
 import "core:log"
 import "core:math/linalg"
 import "core:mem/virtual"
-import "core:os/os2"
+import "core:os"
 import "core:slice"
 import "core:strconv"
 import "core:strings"
@@ -36,7 +36,7 @@ Gmsh_Validation_Error :: enum {
 
 Gmsh_Error :: union {
 	io.Error,
-	os2.Error,
+	os.Error,
 	Gmsh_Validation_Error,
 }
 
@@ -148,11 +148,11 @@ gmsh_parse :: proc(
 	context.temp_allocator = virtual.arena_allocator(&scratch)
 	context.allocator = allocator
 
-	file := os2.open(path) or_return
-	defer os2.close(file)
+	file := os.open(path) or_return
+	defer os.close(file)
 
 	reader: bufio.Reader
-	bufio.reader_init(&reader, os2.to_stream(file))
+	bufio.reader_init(&reader, os.to_stream(file))
 	defer bufio.reader_destroy(&reader)
 
 	// format

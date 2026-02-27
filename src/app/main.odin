@@ -6,7 +6,7 @@ import "core:encoding/json"
 import "core:log"
 import "core:math/linalg"
 import "core:mem/virtual"
-import "core:os/os2"
+import "core:os"
 import "core:path/filepath"
 import "core:slice"
 
@@ -25,7 +25,7 @@ main :: proc() {
 	context.allocator = virtual.arena_allocator(&arena)
 
 	if !run() {
-		os2.exit(1)
+		os.exit(1)
 	}
 
 }
@@ -34,11 +34,11 @@ run :: proc() -> bool {
 	fem.setup_quadrature_rules()
 	fem.setup_subcell_rules()
 
-	if len(os2.args) < 2 {
+	if len(os.args) < 2 {
 		log.error("Expected a path to a config file."); return false
 	}
 
-	config_path := os2.args[1]
+	config_path := os.args[1]
 
 	cs := read_config(config_path) or_return
 
@@ -148,15 +148,15 @@ assign_default :: proc(a: $T, default: T) -> T {
 read_config :: proc(config_path: string) -> (Config_Schema, bool) {
 	cs := Config_Schema{}
 
-	json_data, err := os2.read_entire_file_from_path(config_path, context.allocator)
+	json_data, err := os.read_entire_file_from_path(config_path, context.allocator)
 
 	if err != nil {
-		log.errorf(os2.error_string(err))
+		log.errorf(os.error_string(err))
 		return {}, false
 	}
 
 	config_dir := filepath.dir(config_path)
-	os2.chdir(config_dir)
+	os.chdir(config_dir)
 
 	if err := json.unmarshal(json_data, &cs, .MJSON); err != nil {
 		log.info(err)

@@ -13,7 +13,8 @@ import "core:path/filepath"
 import "core:strings"
 
 import "core:fmt"
-import "core:os/os2"
+import "core:os"
+import "core:time"
 
 import "core:mem"
 
@@ -113,8 +114,8 @@ solve_model :: proc(config: Solver_Config, model: ^Model, mesh: fem.Mesh) -> Sol
 
 	// setup output
 	viz_mesh := fio.vtk_create_visualization_mesh(mesh, config.output.output_rule)
-	if !os2.exists(config.output.output_dir) {
-		os2.make_directory(config.output.output_dir)
+	if !os.exists(config.output.output_dir) {
+		os.make_directory(config.output.output_dir)
 	}
 
 	// solver state
@@ -149,6 +150,8 @@ solve_model :: proc(config: Solver_Config, model: ^Model, mesh: fem.Mesh) -> Sol
 		// compute initial J and R
 		la.scal(R, 0)
 		la.scal(J, 0)
+
+		local_start := time.now()
 		for element in mesh.elements {
 			element_loop := infra.ca_check(&ca)
 			defer infra.ca_rewind_to(&ca, element_loop)
@@ -160,6 +163,8 @@ solve_model :: proc(config: Solver_Config, model: ^Model, mesh: fem.Mesh) -> Sol
 			fem.layout_scatter_local(layout, element.id, J, R, local_j, local_r, constraint_mask)
 		}
 		fem.layout_finalize_constraints(layout, J, R, constraint_mask)
+
+		log.debugf("Local Assembly took %v", time.since(local_start))
 
 		R0_norm := la.nrm2(R)
 
@@ -173,7 +178,7 @@ solve_model :: proc(config: Solver_Config, model: ^Model, mesh: fem.Mesh) -> Sol
 			}
 			non_lin_iters += 1
 			// TODO: solver should be a config option
-			converged, iters, resid := la.sparse_bicgstab_solve(J, du, R, config.linsolve_max_iter, config.linsolve_rtol)
+			converged, iters, resid := la.sparse_cg_solve(J, du, R, config.linsolve_max_iter, config.linsolve_rtol)
 			if converged == false {
 				return {converged = false, reason = .Linear_Solver, final_resid = resid, final_iters = iters}
 			} else {
@@ -221,7 +226,7 @@ solve_model :: proc(config: Solver_Config, model: ^Model, mesh: fem.Mesh) -> Sol
 			model->output_fields(layout, u_k, tc, &output_field_buffer)
 
 			filename := fmt.aprintf("%s_%d.vtu", config.output.prefix, steps_taken)
-			path, _ := os2.join_path({config.output.output_dir, filename}, context.allocator)
+			path, _ := os.join_path({config.output.output_dir, filename}, context.allocator)
 
 			fio.write_vtu(path, mesh, viz_mesh, output_field_buffer[:])
 
@@ -238,7 +243,7 @@ solve_model :: proc(config: Solver_Config, model: ^Model, mesh: fem.Mesh) -> Sol
 
 	if tc.is_transient {
 		filename := fmt.aprintf("%s.pvd", config.output.prefix)
-		path, _ := os2.join_path({config.output.output_dir, filename}, context.allocator)
+		path, _ := os.join_path({config.output.output_dir, filename}, context.allocator)
 		fio.write_pvd(path, pvd_paths[:], pvd_times[:])
 	}
 
