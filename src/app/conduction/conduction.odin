@@ -127,7 +127,7 @@ weak_form :: proc(
 	T_handle: fem.Var_Handle,
 	u: fem.Vector,
 	u_dot: fem.Vector,
-	du_udot: f64,
+	ts: fem.Timestep,
 	element: fem.Mesh_Element,
 	allocator := context.allocator,
 ) {
@@ -178,7 +178,7 @@ weak_form :: proc(
 				// sources (non linear)
 				jacobian -= source.d_Q[qp] * val_test * val_trial * fem.dV(quad, qp)
 
-				// mass (timestepping)
+				//mass (timestepping)
 
 				M_ij := val_trial * val_test * material.rho[qp] * material.cp[qp] * fem.dV(quad, qp)
 				M_ij_deriv :=
@@ -190,7 +190,7 @@ weak_form :: proc(
 
 				residual -= M_ij * u_dot_coeffs[trial]
 
-				jacobian += M_ij * du_udot - M_ij_deriv
+				jacobian += M_ij * ts.du_du_dot[T_handle] - M_ij_deriv
 			}
 		}
 	}
@@ -217,6 +217,8 @@ solve :: proc(model_params: Model_Parameters, mesh: fem.Mesh, order: fem.Basis_O
 	ts, ts_state := fem.timestepper_create(0, 1, 0.1, ics)
 	fem.timestepper_set_scheme(&ts, &ts_state, T_handle, .BDF2)
 
+	// ts, ts_state := fem.timestepper_create_steady(ics, system)
+
 	ni_state := fem.nli_create_state(system)
 
 	ca: infra.Checkpoint_Allocator
@@ -224,13 +226,21 @@ solve :: proc(model_params: Model_Parameters, mesh: fem.Mesh, order: fem.Basis_O
 
 	context.allocator = infra.ca_allocator(&ca)
 
+
 	for step in fem.timestepper_step(&ts, ts_state, ni_state.solution, system) {
 		apply_constraints(model_params, system, T_handle, mesh, step, ni_state.solution, cm)
 
 		ni := fem.nli_create(1e-6, 10)
 
+		lin_tol := fem.nli_linear_tolerance(ni)
+
 		for iter, should_solve in fem.nli_step(&ni, ni_state) {
 			infra.ca_check(&ca); defer infra.ca_rewind(&ca)
+
+			if should_solve {
+				fem.sparse_solve(ni_state.tangent, ni_state.update, ni_state.residual, tol = lin_tol, kind = .CG_SA)
+				fem.nli_update(&ni, ni_state)
+			}
 
 			u_dot, _ := fem.timestepper_derivatives(&ts, ts_state, ni_state.solution, system)
 
@@ -239,22 +249,13 @@ solve :: proc(model_params: Model_Parameters, mesh: fem.Mesh, order: fem.Basis_O
 
 				ls := fem.system_local_problem(system, fem.Entity_ID(id))
 
-				weak_form(model_params, system, ls, T_handle, ni_state.solution, u_dot, (1.0 / step.dt), element)
+				weak_form(model_params, system, ls, T_handle, ni_state.solution, u_dot, step, element)
 
 				fem.system_scatter(system, fem.Entity_ID(id), ni_state.tangent, ni_state.residual, cm, ls)
 
 			}
+
 			fem.system_finalize_constraints(system, ni_state.tangent, ni_state.residual, cm)
-
-			if !should_solve {continue}
-
-			if !fem.sparse_solve(
-				ni_state.tangent,
-				ni_state.update,
-				ni_state.residual,
-				tol = fem.nli_linear_tolerance(ni),
-				kind = .CG_SA
-			) {panic("yikes")}
 
 		}
 		od: serialization.Output_Variable_Data = {system, T_handle, ni_state.solution}
@@ -266,3 +267,14 @@ solve :: proc(model_params: Model_Parameters, mesh: fem.Mesh, order: fem.Basis_O
 
 	}
 }
+
+
+
+
+/*
+iter 0:
+	- build, set initial residual.
+
+iter 1:
+	- solve first, update, rebuild, check convergence.
+*/
