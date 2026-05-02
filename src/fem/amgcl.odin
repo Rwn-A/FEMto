@@ -111,6 +111,6 @@ sparse_solve :: proc(
 	}
 	defer destroy(s)
 	r := solve_system(s, b, x)
-	log.debugf("amgcl: kind=%v iters=%d residual=%.3e converged=%v", kind, r.iters, r.residual, r.converged)
+	//log.debugf("amgcl: kind=%v iters=%d residual=%.3e converged=%v", kind, r.iters, r.residual, r.converged)
 	return r.converged
 }

@@ -253,6 +253,7 @@ solve :: proc(model_params: Model_Parameters, mesh: fem.Mesh, order: fem.Basis_O
 				ni_state.update,
 				ni_state.residual,
 				tol = fem.nli_linear_tolerance(ni),
+				kind = .CG_SA
 			) {panic("yikes")}
 
 		}

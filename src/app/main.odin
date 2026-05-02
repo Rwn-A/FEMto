@@ -33,20 +33,20 @@ main :: proc() {
 	params.isothermal_bcs = make(map[fem.Boundary_ID]conduction.Isothermal_Int)
 	params.materials = make(map[fem.Section_ID]conduction.Material_Int)
 
-	id := mesh.boundary_names["left"] or_else 0
-	id2 := mesh.boundary_names["right"] or_else 1
+	id := mesh.boundary_names["constraint"] or_else 0
+	//id2 := mesh.boundary_names["right"] or_else 1
 
 	params.isothermal_bcs[id] = {
 		procedure = proc(mapped: fem.Mapped_Element, time: f64, data: rawptr) -> conduction.Isothermal_BC {
-			return 10
+			return 100
 		},
 	}
 
-	params.isothermal_bcs[id2] = {
-		procedure = proc(mapped: fem.Mapped_Element, time: f64, data: rawptr) -> conduction.Isothermal_BC {
-			return 15
-		},
-	}
+	// params.isothermal_bcs[id2] = {
+	// 	procedure = proc(mapped: fem.Mapped_Element, time: f64, data: rawptr) -> conduction.Isothermal_BC {
+	// 		return 15
+	// 	},
+	// }
 
 	params.materials[mesh.elements[0].section] = {
 		procedure = proc(
