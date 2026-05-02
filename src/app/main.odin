@@ -1,187 +1,183 @@
-// SPDX-FileCopyrightText: 2026 Rowan Apps
-// SPDX-License-Identifier: MIT
 package main
 
-import "core:encoding/json"
 import "core:log"
-import "core:math/linalg"
 import "core:mem/virtual"
 import "core:os"
-import "core:path/filepath"
 import "core:slice"
 
-import fem "../fe_core"
-import "../la"
-import models "../models"
-import fio "../serialization"
+import "../fem"
+import "../fem/infra"
+import "../fem/serialization"
 
+import "conduction"
 
 main :: proc() {
 	context.logger = log.create_console_logger()
 
 	arena: virtual.Arena
-	if err := virtual.arena_init_growing(&arena); err != nil {log.panic("Allocation failure")}
-	defer virtual.arena_destroy(&arena)
+
+	_ = virtual.arena_init_growing(&arena)
+
 	context.allocator = virtual.arena_allocator(&arena)
 
-	if !run() {
-		os.exit(1)
+	mesh_path := os.args[1]
+
+	mesh, warn, err := serialization.gmsh_parse(mesh_path)
+	if err != nil {log.panic(err)}
+	if warn != nil {log.warn(warn)}
+
+	fem.setup_default_rules()
+
+	params: conduction.Model_Parameters
+
+	params.isothermal_bcs = make(map[fem.Boundary_ID]conduction.Isothermal_Int)
+	params.materials = make(map[fem.Section_ID]conduction.Material_Int)
+
+	id := mesh.boundary_names["left"] or_else 0
+	id2 := mesh.boundary_names["right"] or_else 1
+
+	params.isothermal_bcs[id] = {
+		procedure = proc(mapped: fem.Mapped_Element, time: f64, data: rawptr) -> conduction.Isothermal_BC {
+			return 10
+		},
 	}
 
+	params.isothermal_bcs[id2] = {
+		procedure = proc(mapped: fem.Mapped_Element, time: f64, data: rawptr) -> conduction.Isothermal_BC {
+			return 15
+		},
+	}
+
+	params.materials[mesh.elements[0].section] = {
+		procedure = proc(
+			mapped: fem.Mapped_Element,
+			time: f64,
+			data: rawptr,
+			temperature: []f64,
+			out: conduction.Material,
+		) {
+			slice.fill(out.k, 1)
+			slice.fill(out.cp, 2)
+			slice.fill(out.rho, 1)
+		},
+	}
+
+
+	conduction.solve(params, mesh, .Linear, &arena)
 }
 
-run :: proc() -> bool {
-	fem.setup_quadrature_rules()
-	fem.setup_subcell_rules()
+// main :: proc() {
+// 	context.logger = log.create_console_logger()
 
-	if len(os.args) < 2 {
-		log.error("Expected a path to a config file."); return false
-	}
+// 	ca := infra.Checkpoint_Allocator{}
+// 	infra.ca_init(&ca)
+// 	defer infra.ca_deinit(&ca)
 
-	config_path := os.args[1]
+// 	mesh_path := os.args[1]
 
-	cs := read_config(config_path) or_return
+// 	mesh, warn, err := serialization.gmsh_parse(mesh_path)
+// 	if err != nil {log.panic(err)}
+// 	if warn != nil {log.warn(warn)}
 
-	mesh, warn, mesh_err := fio.gmsh_parse(cs.mesh)
+// 	fem.setup_default_rules()
 
-	if mesh_err != nil {
-		log.errorf("Failed to read mesh because %v", mesh_err); return false
-	}
+// 	// system setup
 
-	if warn != nil {
-		log.warn("Mesh warning: %v", warn)
-	}
+// 	sys_desc := fem.System_Description{}
 
-	sc := models.Solver_Config{}
+// 	phi_handle := fem.description_add_variable(
+// 		&sys_desc,
+// 		{bd = {.Lagrange, .Linear}, components = 1},
+// 	)
 
-	sc.output = {
-		output_dir  = assign_default(cs.output.directory, "./"),
-		frequency   = assign_default(cs.output.frequency, 1),
-		prefix      = cs.name,
-		output_rule = .Split_Linear if cs.output.order == .Linear else .Split_Quadratic,
-	}
+// 	fem.description_couple(&sys_desc, phi_handle, phi_handle)
 
-	sc.tc = {
-		is_transient = (cs.transient != {}),
-		timestep     = cs.transient.timestep,
-		current_time = cs.transient.start,
-		end_time     = cs.transient.end,
-	}
+// 	system := fem.system_from_description(mesh, sys_desc, context.allocator)
 
-	sc.linsolve_rtol = assign_default(cs.linear_solver.rtol, 1e-7)
-	sc.non_linear_rtol = assign_default(cs.non_linear_solver.rtol, 1e-7)
-	sc.linsolve_max_iter = assign_default(cs.linear_solver.max_iterations, 1000)
-	sc.non_linear_max_iter = assign_default(cs.non_linear_solver.max_iterations, 100)
-
-	model: models.Model
-	switch cs.model {
-	case .Conduction:
-		model = configure_conduction(cs, mesh) or_return
-	case .Elasticity:
-		model = configure_elasticity(cs, mesh) or_return
-	case:
-		log.error("Unknown model"); return false
-	}
-
-	res := models.solve_model(sc, &model, mesh)
-
-	if res.converged == false {
-		log.error(res)
-	} else {
-		log.info("Simulation complete!")
-	}
-	return true
-}
-
-Field_Config :: struct {
-	order:              fem.Order,
-	boundaries:         map[string][]Property_Config,
-	initial_conditions: map[string]Property_Config,
-}
-
-Section_Config :: struct {
-	material: Property_Config,
-	sources:  []Property_Config,
-}
-
-Property_Value :: union {
-	f64,
-	string,
-	int,
-	fem.Vec3,
-}
-
-Property_Config :: map[string]Property_Value
-
-Config_Schema :: struct {
-	name:              string,
-	mesh:              string,
-	model:             enum {
-		Conduction,
-		Elasticity,
-	},
-	output:            struct {
-		directory: string,
-		frequency: int,
-		order:     fem.Order,
-	},
-	transient:         struct {
-		timestep, start, end: f64,
-	},
-	linear_solver:     struct {
-		max_iterations: int,
-		rtol:           f64,
-	},
-	non_linear_solver: struct {
-		max_iterations: int,
-		rtol:           f64,
-	},
-	fields:            map[string]Field_Config,
-	sections:          map[string]Section_Config,
-}
-
-assign_default :: proc(a: $T, default: T) -> T {
-	if a != {} {return a}
-	return default
-}
-
-read_config :: proc(config_path: string) -> (Config_Schema, bool) {
-	cs := Config_Schema{}
-
-	json_data, err := os.read_entire_file_from_path(config_path, context.allocator)
-
-	if err != nil {
-		log.errorf(os.error_string(err))
-		return {}, false
-	}
-
-	config_dir := filepath.dir(config_path)
-	os.chdir(config_dir)
-
-	if err := json.unmarshal(json_data, &cs, .MJSON); err != nil {
-		log.info(err)
-		return {}, false
-	}
+// 	ics := fem.system_vector(system)
+// 	cm := fem.system_constraint_mask(system)
 
 
-	return cs, true
+// 	ni := fem.nli_create(system, ics, 1e-4, 5)
 
-}
+// 	for name, id in mesh.boundary_names {
+// 		if name == "free" {continue}
 
-property_get :: proc($T: typeid, pc: Property_Config, key: string, optional := false) -> (T, bool) {
-	val, exists := pc[key]
+// 		fem.system_mark_boundary(system, phi_handle, id, cm)
 
-	if !exists {
-		if !optional {log.errorf("Expected a property %s of type %v", key, type_info_of(T))}
-		return {}, false
-	}
+// 		bdi := fem.boundary_dof_iter_create(system, phi_handle, id)
+// 		for bdof in fem.boundary_dof_iter_next(&bdi) {
+// 			fem.nli_current(ni)[bdof.gdof] = 100
+// 		}
+// 	}
 
-	unwrapped, ok := val.(T)
+// 	context.allocator = infra.ca_allocator(&ca)
 
-	if !ok {
-		if !optional {log.errorf("Property %s was expected to be of type %v", key, type_info_of(T))}
-		return {}, false
-	}
+// 	for iter in fem.nli_step(&ni) {
+// 		infra.ca_check(&ca); defer infra.ca_rewind(&ca)
 
-	return unwrapped, true
-}
+// 		defer fem.nli_update(&ni)
+
+// 		for element, id in mesh.elements {
+// 			infra.ca_check(&ca); defer infra.ca_rewind(&ca)
+
+// 			ls := fem.system_local_problem(system, fem.Entity_ID(id))
+// 			defer fem.system_scatter(
+// 				system,
+// 				fem.Entity_ID(id),
+// 				fem.nli_jacobian(ni),
+// 				fem.nli_residual(ni),
+// 				cm,
+// 				ls,
+// 			)
+// 			// weak form
+// 			mapped := fem.map_quadrature(element, {.Interior, .Quad_3, 0})
+// 			space := fem.basis_grad_space(mapped, fem.system_var_bd(system, phi_handle), .Scalar)
+
+// 			u_coeffs := fem.system_gather_var_coeffs(
+// 				system,
+// 				phi_handle,
+// 				fem.Entity_ID(id),
+// 				fem.nli_current(ni),
+// 			)
+
+// 			//log.info(u_coeffs)
+
+// 			for point in 0 ..< fem.space_points(space) {
+// 				for test in 0 ..< fem.space_arity(space) {
+// 					grad_v := fem.space_gradient(space, mapped, point, test)
+// 					for trial in 0 ..< fem.space_arity(space) {
+// 						grad_u := fem.space_gradient(space, mapped, point, trial)
+
+// 						k_ij := fem.dot(grad_u, grad_v) * fem.dV(mapped, point)
+
+// 						fem.local_system_mat_add(ls, phi_handle, test, phi_handle, trial, k_ij)
+// 						fem.local_system_rhs_add(ls, phi_handle, test, -k_ij * u_coeffs[trial])
+// 					}
+// 				}
+// 			}
+// 		}
+
+// 		fem.system_finalize_constraints(system, fem.nli_jacobian(ni), fem.nli_residual(ni), cm)
+
+// 		fem.nli_should_continue(&ni) or_break
+
+// 		fem.sparse_solve(
+// 			fem.nli_jacobian(ni),
+// 			fem.nli_du(ni),
+// 			fem.nli_residual(ni),
+// 			tol = fem.nli_linear_tolerance(ni),
+// 		)
+// 	}
+
+// 	od: serialization.Output_Variable_Data = {system, phi_handle, fem.nli_current(ni)}
+// 	of := serialization.output_field_from_system_variable(
+// 		fem.Grad_Space(.Scalar),
+// 		&od,
+// 		"phi_wahoo",
+// 	)
+
+// 	viz_mesh := serialization.vtk_create_visualization_mesh(mesh, .Linear)
+
+// 	serialization.write_vtu("output.vtu", mesh, viz_mesh, {of})
+// }

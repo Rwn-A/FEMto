@@ -1,8 +1,6 @@
-*.exe
+notes.md
 odinfmt.json
-NOTES.md
+.build
+.output
 *.vtu
-output
-src_old
-*.pdb
-*.rdi
+*.pvd
