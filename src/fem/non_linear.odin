@@ -16,12 +16,12 @@ Nonlinear_Iter_State :: struct {
 	solution, update: Vector,
 }
 
-nli_create_state :: proc(sys: System, allocator := context.allocator) -> Nonlinear_Iter_State {
+nli_create_state :: proc(sys: System, ics: Vector, allocator := context.allocator) -> Nonlinear_Iter_State {
 	return {
-		system_vector(sys, allocator),
-		system_matrix(sys, allocator),
-		system_vector(sys, allocator),
-		system_vector(sys, allocator),
+		solution = slice.clone(ics),
+		tangent = system_matrix(sys, allocator),
+		residual = system_vector(sys, allocator),
+		update = system_vector(sys, allocator),
 	}
 }
 
@@ -61,7 +61,7 @@ nli_step :: proc(ni: ^Nonlinear_Iterator, state: Nonlinear_Iter_State) -> (int, 
 		slice.zero(state.tangent.values)
 	}
 
-	if ni.current_iter == 1{
+	if ni.current_iter == 1 {
 		ni.initial_residual = nrm2(state.residual)
 
 		if ni.initial_residual < ni.trivial_soln_tolerance {
@@ -82,9 +82,9 @@ nli_step :: proc(ni: ^Nonlinear_Iterator, state: Nonlinear_Iter_State) -> (int, 
 }
 
 nli_update :: proc(ni: ^Nonlinear_Iterator, state: Nonlinear_Iter_State) {
-		axpy(state.update, state.solution, 1.0)
-		slice.zero(state.residual)
-		slice.zero(state.tangent.values)
+	axpy(state.update, state.solution, 1.0)
+	slice.zero(state.residual)
+	slice.zero(state.tangent.values)
 }
 
 // optional reasonable tolerance to use for a linear solve

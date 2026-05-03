@@ -156,6 +156,10 @@ system_global_dof :: #force_inline proc(
 	return begin + Global_DOF(sys.dof_layouts[var].local_to_global[element_id][local_dof])
 }
 
+system_local_dofs_count :: proc(sys: System, var: Var_Handle, element_id: Entity_ID) -> int {
+	return len(sys.dof_layouts[var].local_to_global[element_id])
+}
+
 // ----------------------------
 // Description building helpers
 // -----------------------------

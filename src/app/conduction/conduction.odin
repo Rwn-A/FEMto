@@ -1,6 +1,7 @@
 package conduction
 
 import "core:fmt"
+import "core:log"
 import "core:mem/virtual"
 
 import "../../fem"
@@ -79,13 +80,27 @@ empty_variational :: proc(n_p: int) -> Variational_BC {
 	return {make([]f64, n_p), make([]f64, n_p), make([]f64, n_p), make([]f64, n_p), make([]f64, n_p)}
 }
 
+load_ics :: proc(
+	params: Model_Parameters,
+	mesh: fem.Mesh,
+	system: fem.System,
+	handle: fem.Var_Handle,
+	ics: fem.Vector,
+) {
+	for element, id in mesh.elements {
+		ic := params.ics[element.section]
+		for dof in 0 ..< fem.system_local_dofs_count(system, handle, fem.Entity_ID(id)) {
+			ics[fem.system_global_dof(system, handle, fem.Entity_ID(id), fem.Local_DOF(dof))] = ic
+		}
+	}
+}
 
 apply_constraints :: proc(
 	params: Model_Parameters,
 	system: fem.System,
 	T_handle: fem.Var_Handle,
 	mesh: fem.Mesh,
-	ts: fem.Timestep,
+	time: f64,
 	u: fem.Vector,
 	cm: []bool,
 	allocator := context.allocator,
@@ -106,7 +121,7 @@ apply_constraints :: proc(
 			mapped := fem.map_element(element, &rule)
 			defer fem.mapped_destroy(&mapped)
 
-			value := iso_int.procedure(mapped, ts.time, iso_int.data)
+			value := iso_int.procedure(mapped, time, iso_int.data)
 
 			u[bdof.gdof] = fem.basis_dof_functional(
 				element.type,
@@ -194,87 +209,6 @@ weak_form :: proc(
 			}
 		}
 	}
-
-	// bcs := empty_variational(fem.space_points(space))
 }
 
 
-solve :: proc(model_params: Model_Parameters, mesh: fem.Mesh, order: fem.Basis_Order, arena: ^virtual.Arena) {
-	context.allocator = virtual.arena_allocator(arena)
-
-	sys_desc := fem.System_Description{}
-
-	T_handle := fem.description_add_variable(&sys_desc, {bd = {.Lagrange, order}, components = 1})
-
-	fem.description_couple(&sys_desc, T_handle, T_handle)
-
-	system := fem.system_from_description(mesh, sys_desc, context.allocator)
-
-	cm := fem.system_constraint_mask(system)
-	ics := fem.system_vector(system)
-
-
-	ts, ts_state := fem.timestepper_create(0, 1, 0.1, ics)
-	fem.timestepper_set_scheme(&ts, &ts_state, T_handle, .BDF2)
-
-	// ts, ts_state := fem.timestepper_create_steady(ics, system)
-
-	ni_state := fem.nli_create_state(system)
-
-	ca: infra.Checkpoint_Allocator
-	infra.ca_init(&ca)
-
-	context.allocator = infra.ca_allocator(&ca)
-
-
-	for step in fem.timestepper_step(&ts, ts_state, ni_state.solution, system) {
-		apply_constraints(model_params, system, T_handle, mesh, step, ni_state.solution, cm)
-
-		ni := fem.nli_create(1e-6, 10)
-
-		lin_tol := fem.nli_linear_tolerance(ni)
-
-		for iter, should_solve in fem.nli_step(&ni, ni_state) {
-			infra.ca_check(&ca); defer infra.ca_rewind(&ca)
-
-			if should_solve {
-				fem.sparse_solve(ni_state.tangent, ni_state.update, ni_state.residual, tol = lin_tol, kind = .CG_SA)
-				fem.nli_update(&ni, ni_state)
-			}
-
-			u_dot, _ := fem.timestepper_derivatives(&ts, ts_state, ni_state.solution, system)
-
-			for element, id in mesh.elements {
-				infra.ca_check(&ca); defer infra.ca_rewind(&ca)
-
-				ls := fem.system_local_problem(system, fem.Entity_ID(id))
-
-				weak_form(model_params, system, ls, T_handle, ni_state.solution, u_dot, step, element)
-
-				fem.system_scatter(system, fem.Entity_ID(id), ni_state.tangent, ni_state.residual, cm, ls)
-
-			}
-
-			fem.system_finalize_constraints(system, ni_state.tangent, ni_state.residual, cm)
-
-		}
-		od: serialization.Output_Variable_Data = {system, T_handle, ni_state.solution}
-		of := serialization.output_field_from_system_variable(fem.Grad_Space(.Scalar), &od, "temperature")
-
-		viz_mesh := serialization.vtk_create_visualization_mesh(mesh, order)
-
-		serialization.write_vtu(fmt.aprintf("t_%d.vtu", step.step), mesh, viz_mesh, {of})
-
-	}
-}
-
-
-
-
-/*
-iter 0:
-	- build, set initial residual.
-
-iter 1:
-	- solve first, update, rebuild, check convergence.
-*/

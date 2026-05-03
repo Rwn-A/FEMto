@@ -1,6 +1,6 @@
 notes.md
 odinfmt.json
 .build
-.output
+output
 *.vtu
 *.pvd
