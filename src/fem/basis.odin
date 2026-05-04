@@ -99,7 +99,7 @@ basis_tabulate :: proc(
 basis_dof_functional_rule :: proc(
 	element: Element_Type,
 	bd: Basis_Descriptor,
-	dof: int, //TODO: rename basis_dof
+	basis_dof: int, //TODO: rename basis_dof
 ) -> Point_Rule {
 	switch bd.family {
 	case .Lagrange:
@@ -108,15 +108,15 @@ basis_dof_functional_rule :: proc(
 		// chosen dof.
 		rule := SUBCELL_POINT_RULES[element][bd.order]
 
-		rule.points = rule.points[dof:dof + 1]
+		rule.points = rule.points[basis_dof:basis_dof + 1]
 
 		for family in Basis_Family {
 			for order in Basis_Order {
 				tbl := rule.basis_tables[family][order].(Grad_Space_Table)
 				// dof in this case is really our point, so all basis values just for that point, whcih for lagrange is just 0s excpet for a single 1 but alas.
-				vals := tbl.values[dof * basis_count(element, bd):(dof + 1) * basis_count(element, bd)]
+				vals := tbl.values[basis_dof * basis_count(element, bd):(basis_dof + 1) * basis_count(element, bd)]
 
-				grads := tbl.gradients[dof * basis_count(element, bd):(dof + 1) * basis_count(element, bd)]
+				grads := tbl.gradients[basis_dof * basis_count(element, bd):(basis_dof + 1) * basis_count(element, bd)]
 
 				rule.basis_tables[family][order] = Grad_Space_Table{vals, grads, 1, basis_count(element, bd)}
 			}
@@ -145,9 +145,29 @@ scalar_basis_dof_functional :: proc(
 		unreachable()
 	}
 }
+vector_basis_dof_functional :: proc(
+	element: Element_Type,
+	bd: Basis_Descriptor,
+	basis_dof: int,
+	component: int, // component is for repeated vector basis, not native vector basis like RT.
+	field_values: []Vec3,
+) -> f64 {
+	rule := basis_dof_functional_rule(element, bd, basis_dof)
+
+	assert(len(field_values) == len(rule.points))
+
+	switch bd.family {
+	case .Lagrange:
+		return field_values[0][component]
+	case:
+		unreachable()
+	}
+}
+
 
 basis_dof_functional :: proc {
 	scalar_basis_dof_functional,
+	vector_basis_dof_functional,
 }
 
 basis_grad_space :: proc(phys: Mapped_Element, bd: Basis_Descriptor, $shape: Grad_Space_Shape) -> Grad_Space(shape) {

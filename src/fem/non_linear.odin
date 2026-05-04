@@ -81,6 +81,10 @@ nli_step :: proc(ni: ^Nonlinear_Iterator, state: Nonlinear_Iter_State) -> (int, 
 	return ni.current_iter, should_solve, true
 }
 
+nli_reached_max :: proc(ni: ^Nonlinear_Iterator) -> bool {
+	return ni.current_iter >= ni.max_iters
+}
+
 nli_update :: proc(ni: ^Nonlinear_Iterator, state: Nonlinear_Iter_State) {
 	axpy(state.update, state.solution, 1.0)
 	slice.zero(state.residual)

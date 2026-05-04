@@ -13,11 +13,10 @@ Model_Parameters :: struct {
 	sources:         map[fem.Section_ID][]Source_Int,
 	variational_bcs: map[fem.Boundary_ID][]Variational_Int,
 	isothermal_bcs:  map[fem.Boundary_ID]Isothermal_Int,
-	ics:             map[fem.Section_ID]f64,
 }
 
 Isothermal_Int :: struct {
-	procedure: Isothermal_Proc,
+	procedure: fem.DOF_Functional_Scalar_Proc,
 	data:      rawptr,
 }
 
@@ -36,7 +35,6 @@ Variational_Int :: struct {
 	data:      rawptr,
 }
 
-Isothermal_Proc :: #type proc(mapped: fem.Mapped_Element, time: f64, data: rawptr) -> Isothermal_BC
 
 Variational_Proc :: #type proc(
 	mapped: fem.Mapped_Element,
@@ -55,8 +53,6 @@ Variational_BC :: struct {
 	d_q, d_h:    []f64,
 }
 
-Isothermal_BC :: f64
-
 Source :: struct {
 	Q:   []f64,
 	d_Q: []f64,
@@ -65,6 +61,11 @@ Source :: struct {
 Material :: struct {
 	k, rho, cp:       []f64,
 	d_k, d_rho, d_cp: []f64,
+}
+
+Initial_Condition_Int :: struct {
+	data:      rawptr,
+	procedure: fem.DOF_Functional_Scalar_Proc,
 }
 
 @(private = "file")
@@ -80,21 +81,6 @@ empty_variational :: proc(n_p: int) -> Variational_BC {
 	return {make([]f64, n_p), make([]f64, n_p), make([]f64, n_p), make([]f64, n_p), make([]f64, n_p)}
 }
 
-load_ics :: proc(
-	params: Model_Parameters,
-	mesh: fem.Mesh,
-	system: fem.System,
-	handle: fem.Var_Handle,
-	ics: fem.Vector,
-) {
-	for element, id in mesh.elements {
-		ic := params.ics[element.section]
-		for dof in 0 ..< fem.system_local_dofs_count(system, handle, fem.Entity_ID(id)) {
-			ics[fem.system_global_dof(system, handle, fem.Entity_ID(id), fem.Local_DOF(dof))] = ic
-		}
-	}
-}
-
 apply_constraints :: proc(
 	params: Model_Parameters,
 	system: fem.System,
@@ -105,34 +91,25 @@ apply_constraints :: proc(
 	cm: []bool,
 	allocator := context.allocator,
 ) {
-	context.allocator = allocator
-
 	for _, id in mesh.boundary_names {
-		iso_int := params.isothermal_bcs[id] or_continue
-
-		fem.system_mark_boundary(system, T_handle, id, cm)
-
-		bdi := fem.boundary_dof_iter_create(system, T_handle, id)
-
-		for bdof in fem.boundary_dof_iter_next(&bdi) {
-			element := mesh.elements[bdof.element_id]
-			rule := fem.basis_dof_functional_rule(element.type, fem.system_var_bd(system, T_handle), bdof.basis_dof)
-
-			mapped := fem.map_element(element, &rule)
-			defer fem.mapped_destroy(&mapped)
-
-			value := iso_int.procedure(mapped, time, iso_int.data)
-
-			u[bdof.gdof] = fem.basis_dof_functional(
-				element.type,
-				fem.system_var_bd(system, T_handle),
-				bdof.basis_dof,
-				{value},
-			)
-		}
+		iso := params.isothermal_bcs[id] or_continue
+		fem.system_apply_boundary_functional(system, T_handle, mesh, id, time, u, cm, iso.procedure, iso.data, allocator)
 	}
 }
 
+apply_ics :: proc(
+	ics: map[fem.Section_ID]Initial_Condition_Int,
+	system: fem.System,
+	T_handle: fem.Var_Handle,
+	mesh: fem.Mesh,
+	u: fem.Vector,
+	allocator := context.allocator,
+) {
+	for section_id, ic in ics {
+		// time 0 because time dependent ics dont really make sense.
+		fem.system_project_dofs(system, T_handle, mesh, section_id, 0, u, ic.procedure, ic.data, allocator)
+	}
+}
 
 // Written assuming arena backed allocator, this function does not attempt to free any allocated memory.
 weak_form :: proc(
@@ -151,8 +128,10 @@ weak_form :: proc(
 	u_coeffs := fem.system_gather_var_coeffs(system, T_handle, element.id, u)
 	u_dot_coeffs := fem.system_gather_var_coeffs(system, T_handle, element.id, u_dot)
 
+	bd := fem.system_var_bd(system, T_handle)
+
 	quad := fem.map_quadrature(element, {.Interior, .Quad_3, 0})
-	space := fem.basis_grad_space(quad, fem.system_var_bd(system, T_handle), .Scalar)
+	space := fem.basis_grad_space(quad, bd, .Scalar)
 
 	source := empty_source(fem.space_points(space))
 	material := empty_material(fem.space_points(space))
@@ -162,7 +141,12 @@ weak_form :: proc(
 
 	mat := params.materials[element.section]
 
-	mat.procedure(quad, 0, mat.data, T, material)
+	mat.procedure(quad, ts.time, mat.data, T, material)
+
+	for source_int in params.sources[element.section]{
+	   source_int.procedure(quad, ts.time, source_int.data, T, source)
+	}
+
 
 	for qp in 0 ..< fem.space_points(space) {
 		for test in 0 ..< fem.space_arity(space) {
@@ -209,6 +193,48 @@ weak_form :: proc(
 			}
 		}
 	}
+
+    // variational bcs.
+	for facet in element.boundary_facets {
+		quad := fem.map_quadrature(element, {.Surface, fem.infer_quadrature(bd.order), facet})
+		space := fem.basis_grad_space(quad, bd, .Scalar)
+
+		u_coeffs := fem.system_gather_var_coeffs(system, T_handle, element.id, u)
+		T := fem.evaluate_var(space, u_coeffs)
+
+		id := element.boundary_ids[facet]
+		bcs_ints := params.variational_bcs[id] or_continue
+
+		bcs := empty_variational(fem.space_points(space))
+
+		for bc in bcs_ints{
+		  bc.procedure(quad, ts.time, bc.data, T, bcs)
+		}
+
+		for qp in 0..<fem.space_points(space) {
+		  for test in 0..<fem.space_arity(space) {
+		      residual: f64
+			  defer fem.local_system_rhs_add(ls, T_handle, test, residual)
+
+		      val_test := fem.space_value(space, qp, test)
+
+		      residual += (bcs.q[qp] + bcs.h[qp] * bcs.T_amb[qp] - bcs.h[qp] * u_coeffs[qp]) * val_test * fem.dS(quad, qp)
+
+		      for trial in 0..<fem.space_arity(space) {
+		            jacobian: f64
+				    defer fem.local_system_mat_add(ls, T_handle, test, T_handle, trial, jacobian)
+
+					val_trial := fem.space_value(space, qp, trial)
+
+					jacobian += bcs.h[qp] * val_trial * val_test * fem.dS(quad, qp)
+					// non linear h
+					jacobian += bcs.d_h[qp] * (bcs.T_amb[qp] - u_coeffs[qp]) * val_trial * val_test * fem.dS(quad, qp)
+					// non linear q
+					jacobian -= bcs.d_q[qp] * val_trial * val_test * fem.dS(quad, qp)
+		      }
+
+		  }
+		}
+
+	}
 }
-
-

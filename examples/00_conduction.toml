@@ -1,0 +1,21 @@
+model = "conduction"
+
+[mesh]
+path = "./meshes/cantilever.msh"
+
+[output]
+directory = "../results"
+
+[materials]
+
+[materials.beam]
+form = "constant"
+density = 200.0
+specific_heat_capacity = 100.0
+conductivity = 50.0
+
+[boundaries]
+
+[[boundaries.constraint]]
+kind = "isothermal"
+temperature = 12.3

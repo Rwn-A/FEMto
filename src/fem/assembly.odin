@@ -331,68 +331,101 @@ system_var_bd :: proc(sys: System, var: Var_Handle) -> Basis_Descriptor {
 }
 
 // ------------------------------------------------------------------
-// Boundary constraint helpers (used for strong dirichlet conditions)
+// DOF functional helpers
 // ------------------------------------------------------------------
 
-
-Boundary_DOF_Visit :: struct {
-	gdof:       Global_DOF,
-	element_id: Entity_ID,
-	basis_dof:  int,
-	component:  int,
+DOF_Functional_Proc :: union {
+	DOF_Functional_Scalar_Proc,
+	DOF_Functional_Vector_Proc,
 }
 
-// Marks all DOFs for (var, id) as constrained. Call once per variable per
-// boundary before system_finalize_constraints.
-system_mark_boundary :: proc(sys: System, var: Var_Handle, id: Boundary_ID, mask: []bool) {
+@(private)
+_eval_dof_functional :: proc(
+	fn: DOF_Functional_Proc,
+	mapped: Mapped_Element,
+	time: f64,
+	data: rawptr,
+	element: Element,
+	bd: Basis_Descriptor,
+	basis_dof: int,
+	component: int,
+) -> f64 {
+	switch f in fn {
+	case DOF_Functional_Scalar_Proc:
+		out := make([]f64, len(mapped.rule.points))
+		defer delete(out)
+		f(mapped, time, data, out)
+		return basis_dof_functional(element.type, bd, basis_dof, out)
+	case DOF_Functional_Vector_Proc:
+		out := make([]Vec3, len(mapped.rule.points))
+		defer delete(out)
+		f(mapped, time, data, out)
+		return basis_dof_functional(element.type, bd, basis_dof, component, out)
+	}
+	unreachable()
+}
+
+system_apply_boundary_functional :: proc(
+	sys: System,
+	var: Var_Handle,
+	mesh: Mesh,
+	id: Boundary_ID,
+	time: f64,
+	u: Vector,
+	cm: []bool,
+	fn: DOF_Functional_Proc,
+	data: rawptr,
+	allocator := context.allocator,
+) {
 	bnd_dofs, ok := sys.dof_layouts[var].boundary_dofs[id]
 	if !ok {return}
-
+	bd := system_var_bd(sys, var)
+	components := sys.variables[var].components
 	for bnd_dof in bnd_dofs {
 		for local_dof in bnd_dof.local_dofs {
-			mask[system_global_dof(sys, var, bnd_dof.element_id, local_dof)] = true
+			basis_dof := int(local_dof) / components
+			component := int(local_dof) % components
+			gdof := system_global_dof(sys, var, bnd_dof.element_id, local_dof)
+			element := mesh.elements[bnd_dof.element_id]
+			rule := basis_dof_functional_rule(element.type, bd, basis_dof)
+			mapped := map_element(element, &rule, allocator)
+			defer mapped_destroy(&mapped, allocator)
+			u[gdof] = _eval_dof_functional(fn, mapped, time, data, element, bd, basis_dof, component)
+			cm[gdof] = true
 		}
 	}
 }
 
-
-Boundary_DOF_Iterator :: struct {
-	sys:       System,
-	var:       Var_Handle,
-	id:        Boundary_ID,
-	bnd_idx:   int,
-	local_idx: int,
-}
-
-boundary_dof_iter_create :: proc(sys: System, var: Var_Handle, id: Boundary_ID) -> Boundary_DOF_Iterator {
-	return {sys = sys, var = var, id = id}
-}
-
-boundary_dof_iter_next :: proc(it: ^Boundary_DOF_Iterator) -> (visit: Boundary_DOF_Visit, ok: bool) {
-	bnd_dofs := it.sys.dof_layouts[it.var].boundary_dofs[it.id] or_return
-
-	for it.bnd_idx < len(bnd_dofs) {
-		bnd_dof := bnd_dofs[it.bnd_idx]
-		if it.local_idx < len(bnd_dof.local_dofs) {
-			local_dof := bnd_dof.local_dofs[it.local_idx]
-			components := it.sys.variables[it.var].components
-
-			visit = Boundary_DOF_Visit {
-				gdof       = system_global_dof(it.sys, it.var, bnd_dof.element_id, local_dof),
-				element_id = bnd_dof.element_id,
-				basis_dof  = int(local_dof) / components,
-				component  = int(local_dof) % components,
-			}
-
-			it.local_idx += 1
-
-			return visit, true
+system_project_dofs :: proc(
+	sys: System,
+	var: Var_Handle,
+	mesh: Mesh,
+	section_id: Section_ID,
+	time: f64,
+	u: Vector,
+	fn: DOF_Functional_Proc,
+	data: rawptr,
+	allocator := context.allocator,
+) {
+	bd := system_var_bd(sys, var)
+	components := sys.variables[var].components
+	for element in mesh.elements {
+		if element.section != section_id {continue}
+		local_dofs := len(sys.dof_layouts[var].local_to_global[element.id])
+		for local_dof in 0 ..< local_dofs {
+			basis_dof := int(local_dof) / components
+			component := int(local_dof) % components
+			gdof := system_global_dof(sys, var, element.id, Local_DOF(local_dof))
+			rule := basis_dof_functional_rule(element.type, bd, basis_dof)
+			mapped := map_element(element, &rule, allocator)
+			defer mapped_destroy(&mapped, allocator)
+			u[gdof] = _eval_dof_functional(fn, mapped, time, data, element, bd, basis_dof, component)
 		}
-		it.bnd_idx += 1
-		it.local_idx = 0
 	}
-	return {}, false
 }
+
+DOF_Functional_Scalar_Proc :: #type proc(mapped: Mapped_Element, time: f64, data: rawptr, out: []f64)
+DOF_Functional_Vector_Proc :: #type proc(mapped: Mapped_Element, time: f64, data: rawptr, out: []Vec3)
 
 // ---------------------------------------------------------------------------
 // Assembly loop calls

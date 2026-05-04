@@ -1,11 +1,11 @@
 package conduction
 
-import "core:log"
-import "core:mem/virtual"
-import "core:slice"
 import "core:fmt"
-import "core:os"
+import "core:log"
 import "core:mem"
+import "core:mem/virtual"
+import "core:os"
+import "core:slice"
 
 import "../config"
 
@@ -16,19 +16,12 @@ import "../../fem/serialization"
 
 run_simulation :: proc(
 	cfg: config.General_Config,
-	model_schema: config.Model_Schema,
+	model_cfg: Model_Config,
 	arena: ^virtual.Arena,
 	prt: ^infra.Parallel_Runtime,
 ) -> bool {
-    arena_allocator := virtual.arena_allocator(arena)
+	arena_allocator := virtual.arena_allocator(arena)
 	context.allocator = arena_allocator
-
-	log.info("Loading parameters for conduction model.")
-
-	model_params, bd, time_scheme := parse_conduction_schema(cfg.mesh, model_schema) or_return
-
-	// any solver will work fine for conduction, CG is fastest and will likely work for most problems
-	linsolve_kind := config.assign_default(model_schema.linear_solver, fem.Solver_Kind.CG_SA)
 
 	log.info("Setting up state...")
 
@@ -37,25 +30,28 @@ run_simulation :: proc(
 
 	sys_desc := fem.System_Description{}
 
-	handle := fem.description_add_variable(&sys_desc, {bd = bd, components = 1})
+	handle := fem.description_add_variable(&sys_desc, {bd = model_cfg.bd, components = 1})
 
 	fem.description_couple(&sys_desc, handle, handle)
 
 	system := fem.system_from_description(cfg.mesh, sys_desc, context.allocator)
 
+	solver_kind := fem.Solver_Kind.CG_SA
+
 	cm := fem.system_constraint_mask(system)
 	ics := fem.system_vector(system)
 
-	load_ics(model_params, cfg.mesh, system, handle, ics)
-	apply_constraints(model_params, system, handle, cfg.mesh, 0, ics, cm)
+	transient_cfg, is_transient := cfg.transient.?
+	
+	apply_ics(model_cfg.ics, system, handle, cfg.mesh, ics)
+	apply_constraints(model_cfg.params, system, handle, cfg.mesh, transient_cfg.start, ics, cm)
 
 	ni_state := fem.nli_create_state(system, ics)
 
 	ts: fem.Timestepper; ts_state: fem.Timestep_State
-	transient_cfg, is_transient := cfg.transient.?
 	if is_transient {
 		ts, ts_state = fem.timestepper_create(transient_cfg.start, transient_cfg.end, transient_cfg.timestep, ics)
-		fem.timestepper_set_scheme(&ts, &ts_state, handle, time_scheme)
+		fem.timestepper_set_scheme(&ts, &ts_state, handle, model_cfg.time_scheme)
 	} else {
 		ts, ts_state = fem.timestepper_create_steady(ics, system)
 	}
@@ -68,9 +64,12 @@ run_simulation :: proc(
 	parallel_data.ni_state = ni_state
 	parallel_data.system = system
 	parallel_data.cm = cm
-	parallel_data.params = model_params
+	parallel_data.params = model_cfg.params
 	parallel_data.allocators = make([]infra.Checkpoint_Allocator, prt.total_threads)
 	for &alloc in parallel_data.allocators {infra.ca_init(&alloc)}
+	defer {
+		for &alloc in parallel_data.allocators {infra.ca_deinit(&alloc)}
+	}
 
 	out_data: serialization.Output_Variable_Data = {system, handle, ni_state.solution}
 	out_field := serialization.output_field_from_system_variable(fem.Grad_Space(.Scalar), &out_data, "temperature")
@@ -80,19 +79,20 @@ run_simulation :: proc(
 	ca: infra.Checkpoint_Allocator
 	infra.ca_init(&ca)
 	context.allocator = infra.ca_allocator(&ca)
+	defer infra.ca_deinit(&ca)
 
-    ic_output_path := output_path(.VTU, cfg.output.directory, cfg.sim_name, 0, arena_allocator)
+	ic_output_path := config.format_output_path(.VTU, cfg.output.directory, cfg.sim_name, 0, arena_allocator)
 	serialization.write_vtu(ic_output_path, cfg.mesh, cfg.viz_mesh, {out_field})
 
 	if is_transient {
-	   append(&pvd_paths, ic_output_path)
-	   append(&pvd_times, 0)
+		append(&pvd_paths, ic_output_path)
+		append(&pvd_times, 0)
 	}
 
 
 	for step in fem.timestepper_step(&ts, ts_state, ni_state.solution, system) {
 		infra.ca_check(&ca); defer infra.ca_rewind(&ca)
-		apply_constraints(model_params, system, handle, cfg.mesh, step.time, ni_state.solution, cm)
+		apply_constraints(model_cfg.params, system, handle, cfg.mesh, step.time, ni_state.solution, cm)
 
 		parallel_data.step = step
 
@@ -103,15 +103,21 @@ run_simulation :: proc(
 			infra.ca_check(&ca); defer infra.ca_rewind(&ca)
 
 			if should_solve {
-				if !fem.sparse_solve(
+				if res, ok := fem.sparse_solve(
 					ni_state.tangent,
 					ni_state.update,
 					ni_state.residual,
 					tol = linear_tol,
-					kind = linsolve_kind,
-				) {
-				    log.info("Simulation failed.")
-				    return false
+					max_iters = cfg.solver.max_linear_iters,
+					kind = solver_kind,
+				); !ok {
+					log.errorf(
+						"Linear solver %v failed to converge in %d iterations with final residual %f",
+						solver_kind,
+						res.iters,
+						res.residual,
+					)
+					return false
 				}
 				fem.nli_update(&ni, ni_state)
 			}
@@ -125,23 +131,30 @@ run_simulation :: proc(
 			fem.system_finalize_constraints(system, ni_state.tangent, ni_state.residual, cm)
 		}
 
-        path := output_path(.VTU, cfg.output.directory, cfg.sim_name, step.step + 1, arena_allocator)
-		serialization.write_vtu(path, cfg.mesh, cfg.viz_mesh, {out_field})
+		if fem.nli_reached_max(&ni) {
+			log.errorf("Non linear system did not converge to a result in %d iterations.", ni.current_iter)
+			return false
+		}
 
-        if is_transient {
-            append(&pvd_paths, path)
-             //current_time is the time after this iter is done so its what we want
-            append(&pvd_times, ts.current_time)
-        }
+		if (step.step + 1) % cfg.output.frequency == 0 {
+			path := config.format_output_path(.VTU, cfg.output.directory, cfg.sim_name, step.step + 1, arena_allocator)
+			serialization.write_vtu(path, cfg.mesh, cfg.viz_mesh, {out_field})
+
+			if is_transient {
+				append(&pvd_paths, path)
+				//current_time is the time after this iter is done so its what we want
+				append(&pvd_times, ts.current_time)
+			}
+		}
 	}
 
 	if is_transient {
-	    path := output_path(.PVD, cfg.output.directory, cfg.sim_name, allocator = arena_allocator)
+		path := config.format_output_path(.PVD, cfg.output.directory, cfg.sim_name, allocator = arena_allocator)
 		serialization.write_pvd(path, pvd_paths[:], pvd_times[:])
 	}
 
-    log.info("Simulation complete.")
-    return true
+	log.info("Simulation complete.")
+	return true
 }
 
 Parallel_Data :: struct {
@@ -180,162 +193,4 @@ assembly_proc :: proc(data: Parallel_Data, range: infra.Range) {
 		fem.system_scatter(data.system, element_id, data.ni_state.tangent, data.ni_state.residual, data.cm, ls)
 	}
 
-}
-
-parse_conduction_schema :: proc(
-    mesh: fem.Mesh,
-	schema: config.Model_Schema,
-) -> (
-	params: Model_Parameters,
-	bd: fem.Basis_Descriptor,
-	scheme: fem.Time_Scheme,
-	ok: bool,
-) {
-    config_field, exists := schema.fields["temperature"]
-
-    if !exists {
-		log.error("Conduction model expect a field `temperature` to be defined.");
-		return {}, {}, {}, false
-	}
-
-	scheme = config.assign_default(config_field.time_scheme, fem.Time_Scheme.BDF2)
-	bd.order = config.assign_default(config_field.order, fem.Basis_Order.Linear)
-	bd.family = config.assign_default(config_field.basis_family, fem.Basis_Family.Lagrange)
-
-	if scheme == .Newmark{
-	   log.error("Selected time scheme is not valid for temperature field.")
-	   return {}, {}, {}, false
-	}
-
-	if bd.family != .Lagrange{
-	   log.error("Selected basis family is not valid for temperature field.")
-	   return {}, {}, {}, false
-	}
-
-    params.isothermal_bcs = make(map[fem.Boundary_ID]Isothermal_Int)
-	params.materials = make(map[fem.Section_ID]Material_Int)
-	params.variational_bcs = make(map[fem.Boundary_ID][]Variational_Int)
-	params.sources = make(map[fem.Section_ID][]Source_Int)
-	params.ics = make(map[fem.Section_ID]f64)
-
-    // initial conditions
-    for section_name, ic_config in config_field.initial_conditions {
-		id, exists := mesh.section_names[section_name]
-		if !exists {
-			log.errorf("section %s is not declared on the mesh.", section_name);
-			return {}, {}, {}, false
-		}
-
-		type := config.property_get(string, ic_config, "type") or_return
-		switch type {
-		case "constant":
-			params.ics[id] = config.property_get(f64, ic_config, "temperature") or_return
-		case:
-			log.errorf("%s is not a recognized initial condition type", type);
-			return {}, {}, {}, false
-		}
-	}
-
-    // boundary conditions
-	for bnd_name, bnd_configs in config_field.boundaries {
-		id, exists := mesh.boundary_names[bnd_name]
-		if !exists {
-			log.errorf("boundary %s is not declared on the mesh.", bnd_name);
-			return {}, {}, {}, false
-		}
-
-		variational := make([dynamic]Variational_Int)
-		defer params.variational_bcs[id] = variational[:]
-
-
-		// these BC's are not additive, would be wrong to define a isothermal, insulated, convective boundary.
-		had_iso: bool
-		had_adiabatic: bool
-
-		for bnd_config in bnd_configs {
-			bnd_type := config.property_get(string, bnd_config, "type") or_return
-			switch bnd_type {
-			case "isothermal":
-				had_iso = true
-				params.isothermal_bcs[id] = {
-				    data = transmute(rawptr)config.property_get(f64, bnd_config, "temperature") or_return,
-				    procedure = proc(mapped: fem.Mapped_Element, time: f64, data: rawptr) -> f64 {
-				        return transmute(f64)data
-				    }
-				   }
-
-			case "adiabatic":
-				had_adiabatic = true
-			case:
-				log.errorf("%s is not a recognized boundary for temperature.", bnd_type)
-			}
-		}
-		if (had_iso && had_adiabatic) || (had_iso && (len(variational) > 0)) {
-			log.errorf("Boundary %s was declared isothermal no other boundaries may be applied.", bnd_name)
-			return {}, {}, {}, false
-		}
-
-		if had_adiabatic && len(variational) > 0 {
-			log.errorf("Boundary %s was declared adiabatic no other boundaries may be applied.", bnd_name)
-			return {}, {}, {}, false
-		}
-
-	}
-
-    for section_name, section_config in schema.sections {
-		id, exists := mesh.section_names[section_name]
-		if !exists {
-			log.errorf("section %s is not declared on the mesh.", section_name);
-			return {}, {}, {}, false
-		}
-
-		mat := section_config.material
-
-		mat_type := config.property_get(string, mat, "type") or_return
-
-		switch mat_type {
-		case "constant":
-			data := new(Constant_Material_Data)
-			data.k = config.property_get(f64, mat, "conductivity") or_return
-			data.rho = config.property_get(f64, mat, "density") or_return
-			data.cp = config.property_get(f64, mat, "specific_heat") or_return
-			params.materials[id] = {
-				data = data,
-				procedure = proc(
-					mapped: fem.Mapped_Element, time: f64, data: rawptr, temperature: []f64, out: Material
-				) {
-					info := cast(^Constant_Material_Data)data
-					slice.fill(out.k, info.k); slice.fill(out.rho, info.rho); slice.fill(out.cp, info.cp)
-				},
-			}
-        }
-	}
-
-	return params, bd, scheme, true
-
-	Constant_Material_Data :: struct {
-		k, rho, cp: f64,
-	}
-
-}
-
-Output_Path_Format :: enum {
-    PVD,
-    VTU,
-}
-
-output_path :: proc(format: Output_Path_Format, dir, sim_name: string, step: int = 0, allocator: mem.Allocator) -> string {
-    context.allocator = allocator
-
-    filename: string
-    switch format{
-        case .PVD:
-            filename = fmt.aprintf("%s.pvd", sim_name)
-        case .VTU:
-            filename = fmt.aprintf("%s_%d.vtu", sim_name, step)
-
-    }
-
-	path, _ := os.join_path({dir, filename}, allocator)
-	return path
 }

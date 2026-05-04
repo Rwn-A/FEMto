@@ -4,3 +4,5 @@ odinfmt.json
 output
 *.vtu
 *.pvd
+results
+vendor/*/.git

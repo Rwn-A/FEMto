@@ -95,6 +95,17 @@ dS :: proc(phys: Mapped_Element, qp: int) -> f64 {
 	return phys.fm.measure[qp] * phys.rule.weights[qp]
 }
 
+infer_quadrature :: proc(highest_basis: Basis_Order) -> Quadrature_Rule {
+	needed := (int(highest_basis) + 1) * 2 + 1
+
+	switch needed {
+	case 0, 1, 2, 3:
+		return .Quad_3
+	case:
+		return .Quad_5
+	}
+}
+
 // Use for custom point rules, if doing quadrature or visualization prefer specific functions.
 map_element :: proc(element: Element, rule: ^Point_Rule, allocator := context.allocator) -> (phys: Mapped_Element) {
 	context.allocator = allocator

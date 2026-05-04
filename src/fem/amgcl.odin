@@ -92,7 +92,10 @@ sparse_solve :: proc(
 	max_iters: int = 500,
 	gmres_m: int = 30,
 	coarse_enough: int = 50,
-) -> bool {
+) -> (
+	r: Solve_Result,
+	ok: bool,
+) {
 	s := create_solver(
 		sparse_matrix_rows(A),
 		A.row_ptrs,
@@ -107,10 +110,10 @@ sparse_solve :: proc(
 	)
 	if s == nil {
 		log.error("amgcl: solver creation failed")
-		return false
+		return {}, false
 	}
 	defer destroy(s)
-	r := solve_system(s, b, x)
-	//log.debugf("amgcl: kind=%v iters=%d residual=%.3e converged=%v", kind, r.iters, r.residual, r.converged)
-	return r.converged
+	r = solve_system(s, b, x)
+	ok = r.converged
+	return
 }
