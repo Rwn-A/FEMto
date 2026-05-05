@@ -1,6 +1,7 @@
 package conduction
 
 import "core:log"
+import "core:math"
 import "core:slice"
 
 
@@ -49,6 +50,8 @@ load_model_config :: proc(
 	model_cfg.ics = make(map[fem.Section_ID]Initial_Condition_Int)
 	model_cfg.params.materials = make(map[fem.Section_ID]Material_Int)
 	model_cfg.params.isothermal_bcs = make(map[fem.Boundary_ID]Isothermal_Int)
+	model_cfg.params.sources = make(map[fem.Section_ID][]Source_Int)
+	model_cfg.params.variational_bcs = make(map[fem.Boundary_ID][]Variational_Int)
 
 
 	if temperature_field, exists := config.table_get_opt(^toml.Table, schema.fields, "temperature"); exists {
@@ -96,6 +99,9 @@ load_model_config :: proc(
 
 	// sources
 
+	sources := make(map[fem.Section_ID][dynamic]Source_Int, context.temp_allocator)
+	for region_name, id in cfg.mesh.section_names {sources[id] = make([dynamic]Source_Int, context.temp_allocator)}
+
 	for source in schema.sources {
 		source_tbl, is_tbl := source.(^toml.Table)
 		if !is_tbl {
@@ -114,35 +120,14 @@ load_model_config :: proc(
 			return {}, false
 		}
 
-		regions, given := config.table_get_opt(^toml.List, source_tbl, "region")
-		for section_name, id in cfg.mesh.section_names {
-			source_builder := make([dynamic]Source_Int)
-			defer model_cfg.params.sources[id] = source_builder[:]
-
-			if !given {
-				append(&source_builder, source)
-			}else{
-				for region in regions {
-					region_str, is_str := region.(string)
-					if !is_str{
-						log.error("region in source `region` must be a string")
-						return {}, false
-					}
-					if region_str not_in cfg.mesh.section_names {
-						log.errorf("region %s was not defined on the mesh", region_str)
-						return {}, false
-					}
-					if region_str == section_name {
-						append(&source_builder, source)
-					}
-				}
-			}
-
-
+		for region in config.active_region_ids(cfg, source_tbl, "region") or_return {
+			append(&sources[region], source)
 		}
-
-
 	}
+
+
+
+	for k in sources {model_cfg.params.sources[k] = slice.clone(sources[k][:])}
 
 	// boundaries
 
@@ -174,6 +159,12 @@ load_model_config :: proc(
 			switch kind {
 			case "isothermal":
 				model_cfg.params.isothermal_bcs[id] = isothermal(bc_tbl) or_return
+				had_exclusive = true
+			case "isothermal_ramp":
+				model_cfg.params.isothermal_bcs[id] = ramped_iso(bc_tbl) or_return
+				had_exclusive = true
+			case "isothermal_pulsed":
+				model_cfg.params.isothermal_bcs[id] = pulsed_iso(bc_tbl) or_return
 				had_exclusive = true
 			case "convective":
 				append(&variational_builder, convective(bc_tbl) or_return)
@@ -241,6 +232,57 @@ isothermal :: proc(tbl: ^toml.Table) -> (bc: Isothermal_Int, ok: bool) {
 	bc.data = transmute(rawptr)temp
 	bc.procedure = proc(mapped: fem.Mapped_Element, time: f64, data: rawptr, out: []f64) {
 		slice.fill(out, transmute(f64)data)
+	}
+
+	return bc, true
+}
+
+ramped_iso :: proc(tbl: ^toml.Table) -> (bc: Isothermal_Int, ok: bool) {
+	Ramped_ISO :: struct {
+		i_temp, f_temp: f64,
+		slope: f64
+	}
+
+	data := new(Ramped_ISO)
+
+	data.i_temp = config.table_get(f64, tbl, "initial_temperature") or_return
+	data.f_temp = config.table_get(f64, tbl, "final_temperature") or_return
+	duration := config.table_get(f64, tbl, "duration") or_return
+
+	data.slope = (data.f_temp - data.i_temp) / duration
+
+
+	bc.data = data
+	bc.procedure = proc(mapped: fem.Mapped_Element, time: f64, data: rawptr, out: []f64) {
+		info := cast(^Ramped_ISO)data
+
+		temp := info.slope * time + info.i_temp
+
+		slice.fill(out, temp if temp <= info.f_temp else info.f_temp)
+	}
+
+	return bc, true
+}
+
+pulsed_iso :: proc(tbl: ^toml.Table) -> (bc: Isothermal_Int, ok: bool) {
+	Pulsed_ISO :: struct {
+		angular_frequency: f64,
+		amplitude: f64,
+		offset: f64,
+	}
+
+	data := new(Pulsed_ISO)
+
+	data.angular_frequency = (config.table_get(f64, tbl, "frequency") or_return) * 2 * math.PI
+	data.amplitude = config.table_get(f64, tbl, "amplitude") or_return
+	data.offset = config.table_get(f64, tbl, "offset") or_return
+
+
+	bc.data = data
+	bc.procedure = proc(mapped: fem.Mapped_Element, time: f64, data: rawptr, out: []f64) {
+		info := cast(^Pulsed_ISO)data
+
+		slice.fill(out, info.offset + info.amplitude * math.sin(info.angular_frequency * time))
 	}
 
 	return bc, true

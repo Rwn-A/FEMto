@@ -30,6 +30,7 @@ Timestep :: struct {
 	dt:        f64,
 	time:      f64,
 	du_du_dot: [MAX_VARS]f64,
+	du_du_ddot: [MAX_VARS]f64,
 }
 
 timestepper_create :: proc(
@@ -118,8 +119,20 @@ timestepper_du_du_dot :: proc(ts: ^Timestepper, step: Timestep, handle: Var_Hand
 		}
 		return 3.0 / (2.0 * step.dt)
 	case .Newmark:
+		gamma :: 0.5
 		beta :: 0.25
-		return 1.0 / (beta * step.dt * step.dt)
+		return gamma / (beta * step.dt)
+	}
+	unreachable()
+}
+
+
+timestepper_du_du_ddot :: proc(ts: ^Timestepper, step: Timestep, handle: Var_Handle) -> f64 {
+	switch ts.schemes[handle] {
+	case .Steady, .BE, .BDF2: return 0
+	case .Newmark:
+	 	beta :: 0.25
+        return 1.0 / (beta * step.dt * step.dt)
 	}
 	unreachable()
 }
@@ -150,6 +163,7 @@ timestepper_step :: proc(ts: ^Timestepper, state: Timestep_State, u: Vector, sys
 	}
 	for var in 0 ..< sys.num_vars {
 		step.du_du_dot[var] = timestepper_du_du_dot(ts, step, Var_Handle(var))
+		step.du_du_ddot[var] = timestepper_du_du_ddot(ts, step, Var_Handle(var))
 	}
 	defer {ts.current_step += 1; ts.current_time += ts.dt}
 	return step, true

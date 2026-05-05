@@ -1,5 +1,7 @@
 package fem
 
+import "core:log"
+
 import "core:mem"
 import "core:slice"
 
@@ -32,26 +34,6 @@ nli_create :: proc(tolerance: f64, max_iterations: int, trivial_soln_tol := 1e-1
 		trivial_soln_tolerance = trivial_soln_tol,
 	}
 }
-
-
-// nli_step :: proc(ni: ^Nonlinear_Iterator, state: Nonlinear_Iter_State) -> (int, bool, bool) {
-// 	if ni.current_iter > 1 {
-// 		slice.zero(state.residual)
-// 		slice.zero(state.tangent.values)
-// 	}
-
-// 	if ni.current_iter == 1 {
-// 		ni.initial_residual = nrm2(state.residual)
-// 		if ni.initial_residual < ni.trivial_soln_tolerance {
-// 			return {}, false, false
-// 		}
-// 	}
-
-// 	can_solve := ni.current_iter > 0
-// 	if ni.current_iter >= ni.max_iters {return {}, false, false}
-// 	defer ni.current_iter += 1
-// 	return ni.current_iter, can_solve, true
-// }
 
 nli_step :: proc(ni: ^Nonlinear_Iterator, state: Nonlinear_Iter_State) -> (int, bool, bool) {
 	should_solve := ni.current_iter > 0

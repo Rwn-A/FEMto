@@ -12,6 +12,7 @@ import "../fem/infra"
 import "../fem/serialization"
 
 import "conduction"
+import le"linear_elasticity"
 import "config"
 
 main :: proc() {
@@ -83,7 +84,18 @@ main :: proc() {
 			log.info("Failed to parse configuration.")
 			os.exit(1)
 		}
+		//free_all(context.temp_allocator)
 		if !conduction.run_simulation(cfg, model_cfg, &arena, &prt) {
+			os.exit(1)
+		}
+	case "elasticity":
+		model_cfg, model_cfg_ok := le.load_model_config(schema, cfg)
+		if !model_cfg_ok {
+			log.info("Failed to parse configuration.")
+			os.exit(1)
+		}
+		free_all(context.temp_allocator)
+		if !le.run_simulation(cfg, model_cfg, &arena, &prt) {
 			os.exit(1)
 		}
 	case:

@@ -42,7 +42,7 @@ run_simulation :: proc(
 	ics := fem.system_vector(system)
 
 	transient_cfg, is_transient := cfg.transient.?
-	
+
 	apply_ics(model_cfg.ics, system, handle, cfg.mesh, ics)
 	apply_constraints(model_cfg.params, system, handle, cfg.mesh, transient_cfg.start, ics, cm)
 
@@ -60,6 +60,7 @@ run_simulation :: proc(
 
 	parallel_data: Parallel_Data
 	parallel_data.mesh = cfg.mesh
+	parallel_data.partitions = thread_partitions
 	parallel_data.handle = handle
 	parallel_data.ni_state = ni_state
 	parallel_data.system = system
@@ -88,7 +89,6 @@ run_simulation :: proc(
 		append(&pvd_paths, ic_output_path)
 		append(&pvd_times, 0)
 	}
-
 
 	for step in fem.timestepper_step(&ts, ts_state, ni_state.solution, system) {
 		infra.ca_check(&ca); defer infra.ca_rewind(&ca)
@@ -127,16 +127,20 @@ run_simulation :: proc(
 
 			infra.parallel_for(prt, {0, len(cfg.mesh.elements)}, parallel_data, assembly_proc)
 
+			fem.system_flush_orphans(parallel_data.partitions, ni_state.tangent, ni_state.residual)
 
 			fem.system_finalize_constraints(system, ni_state.tangent, ni_state.residual, cm)
 		}
 
 		if fem.nli_reached_max(&ni) {
 			log.errorf("Non linear system did not converge to a result in %d iterations.", ni.current_iter)
+			if is_transient {
+				log.errorf("Current timestep: %d", ts.current_step)
+			}
 			return false
 		}
 
-		if (step.step + 1) % cfg.output.frequency == 0 {
+		if ((step.step + 1) % cfg.output.frequency == 0) || !is_transient {
 			path := config.format_output_path(.VTU, cfg.output.directory, cfg.sim_name, step.step + 1, arena_allocator)
 			serialization.write_vtu(path, cfg.mesh, cfg.viz_mesh, {out_field})
 
@@ -159,6 +163,7 @@ run_simulation :: proc(
 
 Parallel_Data :: struct {
 	allocators: []infra.Checkpoint_Allocator,
+	partitions: fem.Thread_Partitions,
 	mesh:       fem.Mesh,
 	params:     Model_Parameters,
 	ni_state:   fem.Nonlinear_Iter_State,
@@ -190,7 +195,7 @@ assembly_proc :: proc(data: Parallel_Data, range: infra.Range) {
 			data.mesh.elements[element_id],
 		)
 
-		fem.system_scatter(data.system, element_id, data.ni_state.tangent, data.ni_state.residual, data.cm, ls)
+		fem.system_thread_scatter(data.system, element_id, data.ni_state.tangent, data.ni_state.residual, data.cm, ls, data.partitions.partitions[infra.tid])
 	}
 
 }

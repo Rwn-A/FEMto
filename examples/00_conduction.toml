@@ -1,4 +1,5 @@
 model = "conduction"
+sim_name = "ex0"
 
 [mesh]
 path = "./meshes/cantilever.msh"
@@ -6,16 +7,20 @@ path = "./meshes/cantilever.msh"
 [output]
 directory = "../results"
 
-[materials]
+[solver]
+max_nonlinear_iters = 4
 
 [materials.beam]
 form = "constant"
 density = 200.0
 specific_heat_capacity = 100.0
-conductivity = 50.0
-
-[boundaries]
+conductivity = 100.0
 
 [[boundaries.constraint]]
 kind = "isothermal"
-temperature = 12.3
+temperature = 40.2
+
+
+[[sources]]
+form = "constant"
+heat = -12.3

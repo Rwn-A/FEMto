@@ -1,3 +1,7 @@
 # FEMto
 
-Re-write branch, not usable or stable.
+A simple finite element solver written in Odin.
+
+## Overview
+
+FEMto is
