@@ -7,20 +7,13 @@ path = "./meshes/cantilever.msh"
 [output]
 directory = "../results"
 
-[solver]
-max_nonlinear_iters = 4
+[[material]]
+kind = "builtin:constant_material"
+density = 7
+conductivity = 10
+specific_heat_capacity = 12
 
-[materials.beam]
-form = "constant"
-density = 200.0
-specific_heat_capacity = 100.0
-conductivity = 100.0
-
-[[boundaries.constraint]]
-kind = "isothermal"
-temperature = 40.2
-
-
-[[sources]]
-form = "constant"
-heat = -12.3
+[[boundary_condition]]
+kind = "builtin:isothermal"
+boundaries = ["constraint"]
+temperature = 120

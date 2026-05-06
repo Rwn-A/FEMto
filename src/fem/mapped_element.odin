@@ -17,7 +17,7 @@ Element :: struct {
 
 Mapped_Element :: struct {
 	rule:    ^Point_Rule,
-	element: Element,
+	element: Mesh_Element,
 	im:      #soa[]Interior_Geometry,
 	fm:      #soa[]Facet_Geometry,
 }
@@ -46,7 +46,7 @@ Quadrature_Descriptor :: struct {
 	facet:  int,
 }
 
-map_quadrature :: proc(element: Element, qd: Quadrature_Descriptor, allocator := context.allocator) -> Mapped_Element {
+map_quadrature :: proc(element: Mesh_Element, qd: Quadrature_Descriptor, allocator := context.allocator) -> Mapped_Element {
 	switch qd.region {
 	case .Interior:
 		return map_element(element, &INTERIOR_QUADRATURE_POINT_RULES[element.type][qd.rule], allocator)
@@ -107,7 +107,7 @@ infer_quadrature :: proc(highest_basis: Basis_Order) -> Quadrature_Rule {
 }
 
 // Use for custom point rules, if doing quadrature or visualization prefer specific functions.
-map_element :: proc(element: Element, rule: ^Point_Rule, allocator := context.allocator) -> (phys: Mapped_Element) {
+map_element :: proc(element: Mesh_Element, rule: ^Point_Rule, allocator := context.allocator) -> (phys: Mapped_Element) {
 	context.allocator = allocator
 
 	num_points := len(rule.points)

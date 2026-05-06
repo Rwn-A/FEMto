@@ -1,4 +1,4 @@
-package conduction
+package linear_elasticity
 
 import "core:log"
 import "core:math"
@@ -6,6 +6,7 @@ import "core:slice"
 
 import "../../fem"
 import "../cfg"
+
 
 Model_Config :: struct {
 	params:      Model_Parameters,
@@ -15,7 +16,6 @@ Model_Config :: struct {
 }
 
 SUPPORTED_FAMILIES := bit_set[fem.Basis_Family]{.Lagrange}
-SUPPORTED_TIME_SCHEMES := bit_set[fem.Time_Scheme]{.BE, .BDF2}
 
 Plug_Context :: cfg.Plugin_Context(
 	Material_Int,
@@ -45,9 +45,9 @@ load_model_config :: proc(
 
 	// load config
 
-	var, iso := cfg.load_bcs(BC_Int, Isothermal_Int, Variational_Int, schema, gcfg.mesh, plug_ctx.bcs) or_return
+	var, iso := cfg.load_bcs(BC_Int, Fixed_Int, Variational_Int, schema, gcfg.mesh, plug_ctx.bcs) or_return
 	model_cfg.params.variational_bcs = var
-	model_cfg.params.isothermal_bcs = iso
+	model_cfg.params.fixed_bcs = iso
 	model_cfg.params.materials = cfg.load_material(Material_Int, schema, gcfg.mesh, plug_ctx.materials) or_return
 	model_cfg.params.sources = cfg.load_sources(Source_Int, schema, gcfg.mesh, plug_ctx.sources) or_return
 
@@ -60,26 +60,23 @@ load_model_config :: proc(
 	} {
 		order        = .Linear,
 		basis_family = .Lagrange,
-		time_scheme  = .BE,
 	}
 
 	// optional field config
-	temperature_table, exists := cfg.table_get_opt(^cfg.Table, schema.fields, "temperature")
+	displ_table, exists := cfg.table_get_opt(^cfg.Table, schema.fields, "displacement")
 
 	if exists {
-		cfg.unmarshal(temperature_table, &field_schema) or_return
-
+		cfg.unmarshal(displ_table, &field_schema) or_return
 		cfg.valid_enum_option(SUPPORTED_FAMILIES, field_schema.basis_family) or_return
-		cfg.valid_enum_option(SUPPORTED_TIME_SCHEMES, field_schema.time_scheme) or_return
-
 		model_cfg.ics = cfg.load_ics(Initial_Condition_Int, field_schema.initial_conditions, gcfg.mesh, plug_ctx.ics) or_return
 
 	}
 
 	model_cfg.bd.order = field_schema.order
 	model_cfg.bd.family = field_schema.basis_family
-	model_cfg.time_scheme = field_schema.time_scheme
 
 
 	return model_cfg, true
 }
+
+

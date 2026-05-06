@@ -1,4 +1,4 @@
-package conduction
+package linear_elasticity
 
 import "core:fmt"
 import "core:log"
@@ -8,9 +8,9 @@ import "core:os"
 import "core:slice"
 
 import "../cfg"
+
 import "../../fem"
 import "../../fem/infra"
-
 import "../../fem/serialization"
 
 
@@ -28,13 +28,13 @@ run_simulation :: proc(
 
 	sys_desc := fem.System_Description{}
 
-	handle := fem.description_add_variable(&sys_desc, {bd = model_cfg.bd, components = 1})
+	handle := fem.description_add_variable(&sys_desc, {bd = model_cfg.bd, components = 3})
 
 	fem.description_couple(&sys_desc, handle, handle)
 
 	system := fem.system_from_description(gcfg.mesh, sys_desc, context.allocator)
 
-	solver_kind := fem.Solver_Kind.CG_SA
+	solver_kind := fem.Solver_Kind.CG_ILU0
 
 	cm := fem.system_constraint_mask(system)
 	ics := fem.system_vector(system)
@@ -49,7 +49,7 @@ run_simulation :: proc(
 	ts: fem.Timestepper; ts_state: fem.Timestep_State
 	if is_transient {
 		ts, ts_state = fem.timestepper_create(transient_cfg.start, transient_cfg.end, transient_cfg.timestep, ics)
-		fem.timestepper_set_scheme(&ts, &ts_state, handle, model_cfg.time_scheme)
+		fem.timestepper_set_scheme(&ts, &ts_state, handle, .Newmark)
 	} else {
 		ts, ts_state = fem.timestepper_create_steady(ics, system)
 	}
@@ -71,7 +71,16 @@ run_simulation :: proc(
 	}
 
 	out_data: serialization.Output_Variable_Data = {system, handle, ni_state.solution}
-	out_field := serialization.output_field_from_system_variable(fem.Grad_Space(.Scalar), &out_data, "temperature")
+	out_field := serialization.output_field_from_system_variable(fem.Grad_Space(.Vector), &out_data, "displacement")
+
+	von_mises_data := Von_Mises_Data{
+	    system       = system,
+	    var          = handle,
+	    displacement = ni_state.solution,
+	    materials    = model_cfg.params.materials,
+	}
+
+	von_field := von_mises_output(&von_mises_data)
 
 	log.info("Simulation starting...")
 
@@ -80,60 +89,45 @@ run_simulation :: proc(
 	context.allocator = infra.ca_allocator(&ca)
 	defer infra.ca_deinit(&ca)
 
-	cfg.output_step(outputter, gcfg.mesh, fem.timestepper_initial_step(ts), {out_field}, true)
-
+	cfg.output_step(outputter, gcfg.mesh, fem.timestepper_initial_step(ts), {out_field, von_field}, true)
 
 	for step in fem.timestepper_step(&ts, ts_state, ni_state.solution, system) {
-		infra.ca_check(&ca); defer infra.ca_rewind(&ca)
-		apply_constraints(model_cfg.params, system, handle, gcfg.mesh, step.time, ni_state.solution, cm)
+	    infra.ca_check(&ca); defer infra.ca_rewind(&ca)
+	    apply_constraints(model_cfg.params, system, handle, gcfg.mesh, step.time, ni_state.solution, cm)
 
-		parallel_data.step = step
+	    parallel_data.step = step
 
-		ni := fem.nli_create(gcfg.solver.tolerance, gcfg.solver.max_nonlinear_iters)
-		linear_tol := fem.nli_linear_tolerance(ni)
+	    slice.zero(ni_state.residual)
+	    slice.zero(ni_state.tangent.values)
 
-		for iter, should_solve in fem.nli_step(&ni, ni_state) {
-			infra.ca_check(&ca); defer infra.ca_rewind(&ca)
+	    u_dot, u_ddot := fem.timestepper_derivatives(&ts, ts_state, ni_state.solution, system)
+	    parallel_data.u_dot = u_dot
+	    parallel_data.u_ddot = u_ddot
 
-			if should_solve {
-				if res, ok := fem.sparse_solve(
-					ni_state.tangent,
-					ni_state.update,
-					ni_state.residual,
-					tol = linear_tol,
-					max_iters = gcfg.solver.max_linear_iters,
-					kind = solver_kind,
-				); !ok {
-					log.errorf(
-						"Linear solver %v failed to converge in %d iterations with final residual %f",
-						solver_kind,
-						res.iters,
-						res.residual,
-					)
-					return false
-				}
-				fem.nli_update(&ni, ni_state)
-			}
+	    infra.parallel_for(prt, {0, len(gcfg.mesh.elements)}, parallel_data, assembly_proc)
+	    fem.system_flush_orphans(parallel_data.partitions, ni_state.tangent, ni_state.residual)
+	    fem.system_finalize_constraints(system, ni_state.tangent, ni_state.residual, cm)
 
-			u_dot, _ := fem.timestepper_derivatives(&ts, ts_state, ni_state.solution, system)
-			parallel_data.u_dot = u_dot
+	    if res, ok := fem.sparse_solve(
+	        ni_state.tangent,
+	        ni_state.update,
+	        ni_state.residual,
+	        tol = gcfg.solver.tolerance,
+	        max_iters = gcfg.solver.max_linear_iters,
+	        kind = solver_kind,
+	    ); !ok {
+	        log.errorf(
+	            "Linear solver %v failed to converge in %d iterations with final residual %f",
+	            solver_kind,
+	            res.iters,
+	            res.residual,
+	        )
+	        return false
+	    }
 
-			infra.parallel_for(prt, {0, len(gcfg.mesh.elements)}, parallel_data, assembly_proc)
+	    fem.axpy(ni_state.update, ni_state.solution, 1.0)
 
-			fem.system_flush_orphans(parallel_data.partitions, ni_state.tangent, ni_state.residual)
-
-			fem.system_finalize_constraints(system, ni_state.tangent, ni_state.residual, cm)
-		}
-
-		if fem.nli_reached_max(&ni) {
-			log.errorf("Non linear system did not converge to a result in %d iterations.", ni.current_iter)
-			if is_transient {
-				log.infof("Current timestep: %d", ts.current_step)
-			}
-			return false
-		}
-
-		cfg.output_step(outputter, gcfg.mesh, step, {out_field})
+	    cfg.output_step(outputter, gcfg.mesh, step, {out_field, von_field})
 	}
 
 	cfg.output_flush(outputter)
@@ -150,6 +144,7 @@ Parallel_Data :: struct {
 	ni_state:   fem.Nonlinear_Iter_State,
 	handle:     fem.Var_Handle,
 	u_dot:      fem.Vector,
+	u_ddot:     fem.Vector,
 	step:       fem.Timestep,
 	cm:         []bool,
 	system:     fem.System,
@@ -172,6 +167,7 @@ assembly_proc :: proc(data: Parallel_Data, range: infra.Range) {
 			data.handle,
 			data.ni_state.solution,
 			data.u_dot,
+			data.u_ddot,
 			data.step,
 			data.mesh.elements[element_id],
 		)

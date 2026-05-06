@@ -68,6 +68,11 @@ Initial_Condition_Int :: struct {
 	procedure: fem.DOF_Functional_Scalar_Proc,
 }
 
+BC_Int :: union {
+	Isothermal_Int,
+	Variational_Int,
+}
+
 @(private = "file")
 empty_source :: proc(n_p: int) -> Source {return {make([]f64, n_p), make([]f64, n_p)}}
 
@@ -93,7 +98,18 @@ apply_constraints :: proc(
 ) {
 	for _, id in mesh.boundary_names {
 		iso := params.isothermal_bcs[id] or_continue
-		fem.system_apply_boundary_functional(system, T_handle, mesh, id, time, u, cm, iso.procedure, iso.data, allocator)
+		fem.system_apply_boundary_functional(
+			system,
+			T_handle,
+			mesh,
+			id,
+			time,
+			u,
+			cm,
+			iso.procedure,
+			iso.data,
+			allocator,
+		)
 	}
 }
 
@@ -101,16 +117,15 @@ apply_ics :: proc(
 	ics: map[fem.Section_ID]Initial_Condition_Int,
 	system: fem.System,
 	T_handle: fem.Var_Handle,
+	start_time: f64,
 	mesh: fem.Mesh,
 	u: fem.Vector,
 	allocator := context.allocator,
 ) {
 	for section_id, ic in ics {
-		// time 0 because time dependent ics dont really make sense.
-		fem.system_project_dofs(system, T_handle, mesh, section_id, 0, u, ic.procedure, ic.data, allocator)
+		fem.system_project_dofs(system, T_handle, mesh, section_id, start_time, u, ic.procedure, ic.data, allocator)
 	}
 }
-
 
 
 // Written assuming arena backed allocator, this function does not attempt to free any allocated memory.
@@ -145,8 +160,8 @@ weak_form :: proc(
 
 	mat.procedure(quad, ts.time, mat.data, T, material)
 
-	for source_int in params.sources[element.section]{
-	   source_int.procedure(quad, ts.time, source_int.data, T, source)
+	for source_int in params.sources[element.section] {
+		source_int.procedure(quad, ts.time, source_int.data, T, source)
 	}
 
 
@@ -196,7 +211,7 @@ weak_form :: proc(
 		}
 	}
 
-    // variational bcs.
+	// variational bcs.
 	for facet in element.boundary_facets {
 		quad := fem.map_quadrature(element, {.Surface, fem.infer_quadrature(bd.order), facet})
 		space := fem.basis_grad_space(quad, bd, .Scalar)
@@ -209,22 +224,23 @@ weak_form :: proc(
 
 		bcs := empty_variational(fem.space_points(space))
 
-		for bc in bcs_ints{
-		  bc.procedure(quad, ts.time, bc.data, T, bcs)
+		for bc in bcs_ints {
+			bc.procedure(quad, ts.time, bc.data, T, bcs)
 		}
 
-		for qp in 0..<fem.space_points(space) {
-		  for test in 0..<fem.space_arity(space) {
-		      residual: f64
-			  defer fem.local_system_rhs_add(ls, T_handle, test, residual)
+		for qp in 0 ..< fem.space_points(space) {
+			for test in 0 ..< fem.space_arity(space) {
+				residual: f64
+				defer fem.local_system_rhs_add(ls, T_handle, test, residual)
 
-		      val_test := fem.space_value(space, qp, test)
+				val_test := fem.space_value(space, qp, test)
 
-		      residual += (bcs.q[qp] + bcs.h[qp] * bcs.T_amb[qp] - bcs.h[qp] * u_coeffs[qp]) * val_test * fem.dS(quad, qp)
+				residual +=
+					(bcs.q[qp] + bcs.h[qp] * bcs.T_amb[qp] - bcs.h[qp] * u_coeffs[qp]) * val_test * fem.dS(quad, qp)
 
-		      for trial in 0..<fem.space_arity(space) {
-		            jacobian: f64
-				    defer fem.local_system_mat_add(ls, T_handle, test, T_handle, trial, jacobian)
+				for trial in 0 ..< fem.space_arity(space) {
+					jacobian: f64
+					defer fem.local_system_mat_add(ls, T_handle, test, T_handle, trial, jacobian)
 
 					val_trial := fem.space_value(space, qp, trial)
 
@@ -233,9 +249,9 @@ weak_form :: proc(
 					jacobian += bcs.d_h[qp] * (bcs.T_amb[qp] - u_coeffs[qp]) * val_trial * val_test * fem.dS(quad, qp)
 					// non linear q
 					jacobian -= bcs.d_q[qp] * val_trial * val_test * fem.dS(quad, qp)
-		      }
+				}
 
-		  }
+			}
 		}
 
 	}

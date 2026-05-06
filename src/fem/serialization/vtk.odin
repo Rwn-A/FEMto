@@ -15,7 +15,7 @@ MAX_OUTPUT_FIELD_COMPONENTS :: 9
 
 Output_Proc :: #type proc(
 	mapped: fem.Mapped_Element,
-	id: fem.Entity_ID,
+	time: f64,
 	data: rawptr,
 	out: [][MAX_OUTPUT_FIELD_COMPONENTS]f64,
 )
@@ -74,7 +74,7 @@ output_field_from_system_variable :: proc(
 
 	of.value_provider = proc(
 		mapped: fem.Mapped_Element,
-		id: fem.Entity_ID,
+		time: f64,
 		data: rawptr,
 		out: [][MAX_OUTPUT_FIELD_COMPONENTS]f64,
 	) {
@@ -85,7 +85,7 @@ output_field_from_system_variable :: proc(
 			space := fem.basis_grad_space(mapped, bd, .Scalar)
 			for p in 0 ..< fem.space_points(space) {
 				for dof in 0 ..< fem.space_arity(space) {
-					coeff := od.data[fem.system_global_dof(od.system, od.var, id, fem.Local_DOF(dof))]
+					coeff := od.data[fem.system_global_dof(od.system, od.var, mapped.element.id, fem.Local_DOF(dof))]
 					out[p][0] += coeff * fem.space_value(space, p, dof)
 				}
 			}
@@ -93,7 +93,7 @@ output_field_from_system_variable :: proc(
 			space := fem.basis_grad_space(mapped, bd, .Vector)
 			for p in 0 ..< fem.space_points(space) {
 				for dof in 0 ..< fem.space_arity(space) {
-					coeff := od.data[fem.system_global_dof(od.system, od.var, id, fem.Local_DOF(dof))]
+					coeff := od.data[fem.system_global_dof(od.system, od.var, mapped.element.id, fem.Local_DOF(dof))]
 					v := coeff * fem.space_value(space, p, dof)
 					out[p][0] += v.x
 					out[p][1] += v.y
@@ -122,11 +122,13 @@ vtk_create_visualization_mesh :: proc(
 	offsets := make([dynamic]i32)
 	types := make([dynamic]u8)
 
-	for &element, i in mesh.elements {
+	for el, i in mesh.elements {
 		base_vertex_idx := i32(len(vertices))
 
+		element: fem.Mesh_Element = el
+		element.el = fem.element_reduce_to_linear(element)
 		subcell := fem.map_element(
-			fem.element_reduce_to_linear(element),
+			element,
 			&fem.SUBCELL_POINT_RULES[element.type][order],
 		)
 		defer fem.mapped_destroy(&subcell)
@@ -206,6 +208,7 @@ write_vtu :: proc(
 	path: string,
 	mesh: fem.Mesh,
 	viz_mesh: VTK_Raw_Mesh,
+	time: f64,
 	fields: []Output_Field,
 	allocator := context.allocator,
 ) -> (
@@ -304,9 +307,11 @@ write_vtu :: proc(
 			for i in 0 ..< len(fields) {delete(point_data[i])}
 		}
 
-		for element, element_id in mesh.elements {
+		for el, element_id in mesh.elements {
+			element: fem.Mesh_Element = el
+			element.el = fem.element_reduce_to_linear(element)
 			subcell := fem.map_element(
-				fem.element_reduce_to_linear(element),
+				element,
 				&fem.SUBCELL_POINT_RULES[element.type][viz_mesh.output_order],
 			)
 			defer fem.mapped_destroy(&subcell)
@@ -316,7 +321,7 @@ write_vtu :: proc(
 			defer delete(out)
 
 			for field, i in fields {
-				field.value_provider(subcell, fem.Entity_ID(element_id), field.data, out)
+				field.value_provider(subcell, time, field.data, out)
 				for &point in out {
 					append(&point_data[i], ..(point[:field.components]))
 				}

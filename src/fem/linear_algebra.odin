@@ -11,7 +11,7 @@ Vec3 :: linalg.Vector3f64
 Mat3 :: linalg.Matrix3x3f64
 
 Voigt6 :: [6]f64
-Voigt6x6 :: [36]f64
+Voigt6x6 :: matrix[6, 6]f64
 
 Vector :: []f64
 
@@ -98,32 +98,10 @@ vector_nrm2 :: proc(x: Vector) -> f64 {
 	return math.sqrt(vector_dot(x, x))
 }
 
-voigt_gemv :: proc(A: Voigt6x6, x: Voigt6, y: ^Voigt6, a: f64 = 1.0, b: f64 = 0.0) {
-	for i in 0 ..< 6 {
-		sum: f64 = 0
-		for j in 0 ..< 6 {
-			sum += A[voigt6x6_idx(i, j)] * x[j]
-		}
-		y[i] = a * sum + b * y[i]
-	}
-}
-
 voigt_axpy :: proc(x: Voigt6, y: ^Voigt6, a: f64 = 1) {
 	for i in 0 ..< 6 {
 		y[i] += a * x[i]
 	}
-}
-
-voigt6x6_idx :: proc(row, col: int) -> int {
-	return (row * 6) + col
-}
-
-voigt6x6_scal :: proc(x: ^Voigt6x6, a: f64) {
-	for &e in x {e *= a}
-}
-
-voigt6_scal :: proc(x: ^Voigt6, a: f64) {
-	for &e in x {e *= a}
 }
 
 frob :: proc(A, B: Mat3) -> (r: f64) {
@@ -134,7 +112,6 @@ frob :: proc(A, B: Mat3) -> (r: f64) {
 idx :: proc {
 	dense_matrix_idx,
 	sparse_matrix_idx,
-	voigt6x6_idx,
 }
 
 
@@ -143,21 +120,17 @@ dot :: proc {
 	vector_dot,
 }
 
-
 axpy :: proc {
 	vector_axpy,
 	voigt_axpy,
 }
 
 gemv :: proc {
-	voigt_gemv,
 	dense_matrix_gemv,
 }
 
 scal :: proc {
 	vector_scal,
-	voigt6x6_scal,
-	voigt6_scal,
 }
 
 nrm2 :: proc {

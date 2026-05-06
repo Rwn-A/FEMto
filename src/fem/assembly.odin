@@ -330,7 +330,12 @@ system_var_bd :: proc(sys: System, var: Var_Handle) -> Basis_Descriptor {
 	return sys.variables[var].bd
 }
 
-evaluate_var_symmetric_gradient :: proc(space: Grad_Space(.Vector), mapping: Mapped_Element, coeffs: []f64, allocator := context.allocator) -> []Voigt6{
+evaluate_var_symmetric_gradient :: proc(
+	space: Grad_Space(.Vector),
+	mapping: Mapped_Element,
+	coeffs: []f64,
+	allocator := context.allocator,
+) -> []Voigt6 {
 	out := make([]Voigt6, space_points(space), allocator)
 	for p in 0 ..< space_points(space) {
 		for dof in 0 ..< space_arity(space) {

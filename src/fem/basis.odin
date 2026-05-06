@@ -110,17 +110,14 @@ basis_dof_functional_rule :: proc(
 
 		rule.points = rule.points[basis_dof:basis_dof + 1]
 
-		for family in Basis_Family {
-			for order in Basis_Order {
-				tbl := rule.basis_tables[family][order].(Grad_Space_Table)
-				// dof in this case is really our point, so all basis values just for that point, whcih for lagrange is just 0s excpet for a single 1 but alas.
-				vals := tbl.values[basis_dof * basis_count(element, bd):(basis_dof + 1) * basis_count(element, bd)]
+		// only lets you eval the provided basis on the rule, seems reasonable but idk
+		tbl := rule.basis_tables[bd.family][bd.order].(Grad_Space_Table)
+		// dof in this case is really our point, so all basis values just for that point, whcih for lagrange is just 0s excpet for a single 1 but alas.
+		vals := tbl.values[basis_dof * basis_count(element, bd):(basis_dof + 1) * basis_count(element, bd)]
 
-				grads := tbl.gradients[basis_dof * basis_count(element, bd):(basis_dof + 1) * basis_count(element, bd)]
+		grads := tbl.gradients[basis_dof * basis_count(element, bd):(basis_dof + 1) * basis_count(element, bd)]
 
-				rule.basis_tables[family][order] = Grad_Space_Table{vals, grads, 1, basis_count(element, bd)}
-			}
-		}
+		rule.basis_tables[bd.family][bd.order] = Grad_Space_Table{vals, grads, 1, basis_count(element, bd)}
 
 		return rule
 	case:

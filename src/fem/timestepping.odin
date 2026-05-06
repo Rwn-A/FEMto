@@ -26,10 +26,10 @@ Timestep_State :: struct {
 }
 
 Timestep :: struct {
-	step:      int,
-	dt:        f64,
-	time:      f64,
-	du_du_dot: [MAX_VARS]f64,
+	step:       int,
+	dt:         f64,
+	time:       f64,
+	du_du_dot:  [MAX_VARS]f64,
 	du_du_ddot: [MAX_VARS]f64,
 }
 
@@ -45,7 +45,8 @@ timestepper_create :: proc(
 		start        = start,
 		end          = end,
 		dt           = dt,
-		current_time = start,
+		current_time = start + dt,
+		current_step = 1,
 		total_steps  = int(math.ceil((end - start) / dt)),
 		allocator    = allocator,
 	}
@@ -68,6 +69,7 @@ timestepper_create_steady :: proc(
 	ts := Timestepper {
 		dt          = 1.0,
 		total_steps = 1,
+		current_step = 1,
 		allocator   = allocator,
 	}
 	state := Timestep_State {
@@ -77,6 +79,15 @@ timestepper_create_steady :: proc(
 	slice.fill(ts.schemes[:], Time_Scheme.Steady)
 
 	return ts, state
+}
+
+
+// used for IC's, does not contain all the fields of a timestep, just `step` and `time`.
+timestepper_initial_step :: proc(ts: Timestepper) -> Timestep {
+	return {
+		step = 0,
+		time = ts.start,
+	}
 }
 
 timestep_state_destroy :: proc(ts: ^Timestepper, state: Timestep_State) {
@@ -129,17 +140,18 @@ timestepper_du_du_dot :: proc(ts: ^Timestepper, step: Timestep, handle: Var_Hand
 
 timestepper_du_du_ddot :: proc(ts: ^Timestepper, step: Timestep, handle: Var_Handle) -> f64 {
 	switch ts.schemes[handle] {
-	case .Steady, .BE, .BDF2: return 0
+	case .Steady, .BE, .BDF2:
+		return 0
 	case .Newmark:
-	 	beta :: 0.25
-        return 1.0 / (beta * step.dt * step.dt)
+		beta :: 0.25
+		return 1.0 / (beta * step.dt * step.dt)
 	}
 	unreachable()
 }
 
 timestepper_step :: proc(ts: ^Timestepper, state: Timestep_State, u: Vector, sys: System) -> (Timestep, bool) {
-	if ts.current_step >= ts.total_steps {return {}, false}
-	if ts.current_step > 0 {
+	if ts.current_step > ts.total_steps {return {}, false}
+	if ts.current_step > 1 {
 		u_dot, u_ddot := timestepper_derivatives(ts, state, u, sys, ts.allocator)
 		defer {delete(u_dot, ts.allocator); delete(u_ddot, ts.allocator)}
 
@@ -165,7 +177,9 @@ timestepper_step :: proc(ts: ^Timestepper, state: Timestep_State, u: Vector, sys
 		step.du_du_dot[var] = timestepper_du_du_dot(ts, step, Var_Handle(var))
 		step.du_du_ddot[var] = timestepper_du_du_ddot(ts, step, Var_Handle(var))
 	}
+
 	defer {ts.current_step += 1; ts.current_time += ts.dt}
+
 	return step, true
 }
 
