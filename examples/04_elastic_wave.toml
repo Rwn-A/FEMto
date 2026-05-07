@@ -1,0 +1,36 @@
+sim_name = "elastic_wave"
+model = "elasticity"
+
+[mesh]
+path = "./meshes/3d_rect.msh"
+
+[output]
+directory = "../results"
+
+[solver]
+tolerance = 1e-8
+
+[time_control]
+start = 0.0
+end = 5
+timestep = 0.1
+
+[[material]]
+kind = "builtin:constant_material"
+
+# ultra-soft debugging material
+elastic_modulus = 100.0
+poissons_ratio = 0.0
+density = 1.0
+
+[[boundary_condition]]
+kind = "builtin:fixed"
+boundaries = ["end_left"]
+displacement = [0, 0, 0]
+
+[[boundary_condition]]
+kind = "builtin:constant_traction"
+boundaries = ["end_right"]
+traction = [1.0, 0.0, 0.0]
+
+

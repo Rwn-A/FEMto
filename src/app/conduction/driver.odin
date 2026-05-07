@@ -34,8 +34,6 @@ run_simulation :: proc(
 
 	system := fem.system_from_description(gcfg.mesh, sys_desc, context.allocator)
 
-	solver_kind := fem.Solver_Kind.CG_SA
-
 	cm := fem.system_constraint_mask(system)
 	ics := fem.system_vector(system)
 
@@ -73,6 +71,12 @@ run_simulation :: proc(
 	out_data: serialization.Output_Variable_Data = {system, handle, ni_state.solution}
 	out_field := serialization.output_field_from_system_variable(fem.Grad_Space(.Scalar), &out_data, "temperature")
 
+	solve_opt := fem.Solver_Options {
+		kind       = .CG_SA,
+		max_iters  = gcfg.solver.max_linear_iters,
+		block_size = 1,
+	}
+
 	log.info("Simulation starting...")
 
 	ca: infra.Checkpoint_Allocator
@@ -90,7 +94,7 @@ run_simulation :: proc(
 		parallel_data.step = step
 
 		ni := fem.nli_create(gcfg.solver.tolerance, gcfg.solver.max_nonlinear_iters)
-		linear_tol := fem.nli_linear_tolerance(ni)
+		solve_opt.tol = fem.nli_linear_tolerance(ni)
 
 		for iter, should_solve in fem.nli_step(&ni, ni_state) {
 			infra.ca_check(&ca); defer infra.ca_rewind(&ca)
@@ -100,13 +104,11 @@ run_simulation :: proc(
 					ni_state.tangent,
 					ni_state.update,
 					ni_state.residual,
-					tol = linear_tol,
-					max_iters = gcfg.solver.max_linear_iters,
-					kind = solver_kind,
+					solve_opt,
 				); !ok {
 					log.errorf(
 						"Linear solver %v failed to converge in %d iterations with final residual %f",
-						solver_kind,
+						solve_opt.kind,
 						res.iters,
 						res.residual,
 					)
@@ -186,5 +188,4 @@ assembly_proc :: proc(data: Parallel_Data, range: infra.Range) {
 			data.partitions.partitions[infra.tid],
 		)
 	}
-
 }

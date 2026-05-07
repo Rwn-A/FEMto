@@ -34,8 +34,6 @@ run_simulation :: proc(
 
 	system := fem.system_from_description(gcfg.mesh, sys_desc, context.allocator)
 
-	solver_kind := fem.Solver_Kind.CG_ILU0
-
 	cm := fem.system_constraint_mask(system)
 	ics := fem.system_vector(system)
 
@@ -73,14 +71,21 @@ run_simulation :: proc(
 	out_data: serialization.Output_Variable_Data = {system, handle, ni_state.solution}
 	out_field := serialization.output_field_from_system_variable(fem.Grad_Space(.Vector), &out_data, "displacement")
 
-	von_mises_data := Von_Mises_Data{
-	    system       = system,
-	    var          = handle,
-	    displacement = ni_state.solution,
-	    materials    = model_cfg.params.materials,
+	von_mises_data := Von_Mises_Data {
+		system       = system,
+		var          = handle,
+		displacement = ni_state.solution,
+		materials    = model_cfg.params.materials,
 	}
 
 	von_field := von_mises_output(&von_mises_data)
+
+	solve_opt := fem.Solver_Options {
+		kind       = .CG_SA,
+		tol        = gcfg.solver.tolerance,
+		max_iters  = gcfg.solver.max_linear_iters,
+		block_size = 3,
+	}
 
 	log.info("Simulation starting...")
 
@@ -92,42 +97,35 @@ run_simulation :: proc(
 	cfg.output_step(outputter, gcfg.mesh, fem.timestepper_initial_step(ts), {out_field, von_field}, true)
 
 	for step in fem.timestepper_step(&ts, ts_state, ni_state.solution, system) {
-	    infra.ca_check(&ca); defer infra.ca_rewind(&ca)
-	    apply_constraints(model_cfg.params, system, handle, gcfg.mesh, step.time, ni_state.solution, cm)
+		infra.ca_check(&ca); defer infra.ca_rewind(&ca)
+		apply_constraints(model_cfg.params, system, handle, gcfg.mesh, step.time, ni_state.solution, cm)
 
-	    parallel_data.step = step
+		parallel_data.step = step
 
-	    slice.zero(ni_state.residual)
-	    slice.zero(ni_state.tangent.values)
+		slice.zero(ni_state.residual)
+		slice.zero(ni_state.tangent.values)
 
-	    u_dot, u_ddot := fem.timestepper_derivatives(&ts, ts_state, ni_state.solution, system)
-	    parallel_data.u_dot = u_dot
-	    parallel_data.u_ddot = u_ddot
+		u_dot, u_ddot := fem.timestepper_derivatives(&ts, ts_state, ni_state.solution, system)
+		parallel_data.u_dot = u_dot
+		parallel_data.u_ddot = u_ddot
 
-	    infra.parallel_for(prt, {0, len(gcfg.mesh.elements)}, parallel_data, assembly_proc)
-	    fem.system_flush_orphans(parallel_data.partitions, ni_state.tangent, ni_state.residual)
-	    fem.system_finalize_constraints(system, ni_state.tangent, ni_state.residual, cm)
+		infra.parallel_for(prt, {0, len(gcfg.mesh.elements)}, parallel_data, assembly_proc)
+		fem.system_flush_orphans(parallel_data.partitions, ni_state.tangent, ni_state.residual)
+		fem.system_finalize_constraints(system, ni_state.tangent, ni_state.residual, cm)
 
-	    if res, ok := fem.sparse_solve(
-	        ni_state.tangent,
-	        ni_state.update,
-	        ni_state.residual,
-	        tol = gcfg.solver.tolerance,
-	        max_iters = gcfg.solver.max_linear_iters,
-	        kind = solver_kind,
-	    ); !ok {
-	        log.errorf(
-	            "Linear solver %v failed to converge in %d iterations with final residual %f",
-	            solver_kind,
-	            res.iters,
-	            res.residual,
-	        )
-	        return false
-	    }
+		if res, ok := fem.sparse_solve(ni_state.tangent, ni_state.update, ni_state.residual, solve_opt); !ok {
+			log.errorf(
+				"Linear solver %v failed to converge in %d iterations with final residual %f",
+				solve_opt.kind,
+				res.iters,
+				res.residual,
+			)
+			return false
+		}
 
-	    fem.axpy(ni_state.update, ni_state.solution, 1.0)
+		fem.axpy(ni_state.update, ni_state.solution, 1.0)
 
-	    cfg.output_step(outputter, gcfg.mesh, step, {out_field, von_field})
+		cfg.output_step(outputter, gcfg.mesh, step, {out_field, von_field})
 	}
 
 	cfg.output_flush(outputter)

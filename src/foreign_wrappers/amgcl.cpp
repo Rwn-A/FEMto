@@ -4,6 +4,7 @@
 #include <amgcl/coarsening/smoothed_aggregation.hpp>
 #include <amgcl/coarsening/ruge_stuben.hpp>
 #include <amgcl/relaxation/spai0.hpp>
+#include <amgcl/relaxation/gauss_seidel.hpp>
 #include <amgcl/relaxation/ilu0.hpp>
 #include <amgcl/relaxation/ilut.hpp>
 #include <amgcl/solver/bicgstab.hpp>
@@ -13,6 +14,7 @@
 #include <amgcl/adapter/crs_tuple.hpp>
 #include <amgcl/relaxation/as_preconditioner.hpp>
 #include <amgcl/backend/builtin.hpp>
+#include <functional>
 #include <memory>
 #include <tuple>
 #include <cstddef>
@@ -28,16 +30,9 @@ typedef struct amgcl_solver amgcl_solver_t;
 typedef enum {
     AMGCL_CG_SA         = 0,
     AMGCL_BICGSTAB_SA   = 1,
-    AMGCL_GMRES_SA      = 2,
-    AMGCL_FGMRES_SA     = 3,
-    AMGCL_CG_RS         = 4,
-    AMGCL_BICGSTAB_RS   = 5,
-    AMGCL_GMRES_RS      = 6,
-    AMGCL_FGMRES_RS     = 7,
-    AMGCL_CG_ILU0       = 8,
-    AMGCL_BICGSTAB_ILU0 = 9,
-    AMGCL_GMRES_ILU0    = 10,
-    AMGCL_FGMRES_ILU0   = 11,
+    AMGCL_FGMRES_SA     = 2,
+    AMGCL_BICGSTAB_ILU0 = 3,
+    AMGCL_FGMRES_ILUT   = 4,
 } amgcl_solver_kind_t;
 
 typedef struct {
@@ -66,77 +61,23 @@ void            amgcl_destroy(amgcl_solver_t *s);
 /* ======================================================================= */
 
 using Backend = amgcl::backend::builtin<double>;
+using Range   = amgcl::iterator_range<const double *>;
+using RangeX  = amgcl::iterator_range<double *>;
 
-// --- SA variants ---
-using Solver_CG_SA = amgcl::make_solver<
-    amgcl::amg<Backend, amgcl::coarsening::smoothed_aggregation, amgcl::relaxation::spai0>,
-    amgcl::solver::cg<Backend>>;
-
-using Solver_BiCGStab_SA = amgcl::make_solver<
-    amgcl::amg<Backend, amgcl::coarsening::smoothed_aggregation, amgcl::relaxation::spai0>,
-    amgcl::solver::bicgstab<Backend>>;
-
-using Solver_GMRES_SA = amgcl::make_solver<
-    amgcl::amg<Backend, amgcl::coarsening::smoothed_aggregation, amgcl::relaxation::spai0>,
-    amgcl::solver::gmres<Backend>>;
-
-using Solver_FGMRES_SA = amgcl::make_solver<
-    amgcl::amg<Backend, amgcl::coarsening::smoothed_aggregation, amgcl::relaxation::spai0>,
-    amgcl::solver::fgmres<Backend>>;
-
-// --- RS variants ---
-using Solver_CG_RS = amgcl::make_solver<
-    amgcl::amg<Backend, amgcl::coarsening::ruge_stuben, amgcl::relaxation::spai0>,
-    amgcl::solver::cg<Backend>>;
-
-using Solver_BiCGStab_RS = amgcl::make_solver<
-    amgcl::amg<Backend, amgcl::coarsening::ruge_stuben, amgcl::relaxation::spai0>,
-    amgcl::solver::bicgstab<Backend>>;
-
-using Solver_GMRES_RS = amgcl::make_solver<
-    amgcl::amg<Backend, amgcl::coarsening::ruge_stuben, amgcl::relaxation::spai0>,
-    amgcl::solver::gmres<Backend>>;
-
-using Solver_FGMRES_RS = amgcl::make_solver<
-    amgcl::amg<Backend, amgcl::coarsening::ruge_stuben, amgcl::relaxation::spai0>,
-    amgcl::solver::fgmres<Backend>>;
-
-// --- ILU0 variants ---
-using Solver_CG_ILU0 = amgcl::make_solver<
-    amgcl::relaxation::as_preconditioner<Backend, amgcl::relaxation::ilu0>,
-    amgcl::solver::cg<Backend>>;
-
-using Solver_BiCGStab_ILU0 = amgcl::make_solver<
-    amgcl::relaxation::as_preconditioner<Backend, amgcl::relaxation::ilu0>,
-    amgcl::solver::bicgstab<Backend>>;
-
-using Solver_GMRES_ILU0 = amgcl::make_solver<
-    amgcl::relaxation::as_preconditioner<Backend, amgcl::relaxation::ilu0>,
-    amgcl::solver::gmres<Backend>>;
-
-using Solver_FGMRES_ILU0 = amgcl::make_solver<
-    amgcl::relaxation::as_preconditioner<Backend, amgcl::relaxation::ilu0>,
-    amgcl::solver::fgmres<Backend>>;
+using Solver_CG_SA         = amgcl::make_solver<amgcl::amg<Backend, amgcl::coarsening::smoothed_aggregation, amgcl::relaxation::gauss_seidel>, amgcl::solver::cg<Backend>>;
+using Solver_BiCGStab_SA   = amgcl::make_solver<amgcl::amg<Backend, amgcl::coarsening::smoothed_aggregation, amgcl::relaxation::gauss_seidel>, amgcl::solver::bicgstab<Backend>>;
+using Solver_FGMRES_SA     = amgcl::make_solver<amgcl::amg<Backend, amgcl::coarsening::smoothed_aggregation, amgcl::relaxation::gauss_seidel>, amgcl::solver::fgmres<Backend>>;
+using Solver_BiCGStab_ILU0 = amgcl::make_solver<amgcl::relaxation::as_preconditioner<Backend, amgcl::relaxation::ilu0>, amgcl::solver::bicgstab<Backend>>;
+using Solver_FGMRES_ILU0   = amgcl::make_solver<amgcl::relaxation::as_preconditioner<Backend, amgcl::relaxation::ilu0>, amgcl::solver::fgmres<Backend>>;
 
 struct amgcl_solver {
-    double              tolerance;
-    int                 max_iters;
-    int                 verbose;
-    int                 n;
-    amgcl_solver_kind_t kind;
+    double   tolerance;
+    int      max_iters;
+    int      verbose;
+    int      n;
 
-    std::unique_ptr<Solver_CG_SA>         cg_sa;
-    std::unique_ptr<Solver_BiCGStab_SA>   bicgstab_sa;
-    std::unique_ptr<Solver_GMRES_SA>      gmres_sa;
-    std::unique_ptr<Solver_FGMRES_SA>     fgmres_sa;
-    std::unique_ptr<Solver_CG_RS>         cg_rs;
-    std::unique_ptr<Solver_BiCGStab_RS>   bicgstab_rs;
-    std::unique_ptr<Solver_GMRES_RS>      gmres_rs;
-    std::unique_ptr<Solver_FGMRES_RS>     fgmres_rs;
-    std::unique_ptr<Solver_CG_ILU0>       cg_ilu0;
-    std::unique_ptr<Solver_BiCGStab_ILU0> bicgstab_ilu0;
-    std::unique_ptr<Solver_GMRES_ILU0>    gmres_ilu0;
-    std::unique_ptr<Solver_FGMRES_ILU0>   fgmres_ilu0;
+    std::function<std::tuple<std::size_t, double>(Range, RangeX)> solve_fn;
+    std::function<void()>                                          print_fn;
 };
 
 void amgcl_params_default(amgcl_params_t *p) {
@@ -166,7 +107,6 @@ amgcl_solver_t *amgcl_create(int n, const int *row_ptr, const int *col_ind,
     h->max_iters = p.max_iters;
     h->verbose   = p.verbose;
     h->n         = n;
-    h->kind      = p.kind;
 
     auto make_A = [&]() {
         return std::make_tuple(
@@ -183,7 +123,9 @@ amgcl_solver_t *amgcl_create(int n, const int *row_ptr, const int *col_ind,
             sp.solver.tol = p.tolerance; sp.solver.maxiter = p.max_iters;
             sp.precond.coarsening.aggr.block_size = p.block_size;
             sp.precond.coarse_enough = p.coarse_enough;
-            h->cg_sa.reset(new Solver_CG_SA(make_A(), sp));
+            auto s = std::make_shared<Solver_CG_SA>(make_A(), sp);
+            h->solve_fn = [s](Range r, RangeX x) { return (*s)(r, x); };
+            h->print_fn = [s]{ std::cout << s->precond() << std::endl; };
             break;
         }
         case AMGCL_BICGSTAB_SA: {
@@ -191,16 +133,9 @@ amgcl_solver_t *amgcl_create(int n, const int *row_ptr, const int *col_ind,
             sp.solver.tol = p.tolerance; sp.solver.maxiter = p.max_iters;
             sp.precond.coarsening.aggr.block_size = p.block_size;
             sp.precond.coarse_enough = p.coarse_enough;
-            h->bicgstab_sa.reset(new Solver_BiCGStab_SA(make_A(), sp));
-            break;
-        }
-        case AMGCL_GMRES_SA: {
-            Solver_GMRES_SA::params sp;
-            sp.solver.tol = p.tolerance; sp.solver.maxiter = p.max_iters;
-            sp.solver.M   = p.gmres_m;
-            sp.precond.coarsening.aggr.block_size = p.block_size;
-            sp.precond.coarse_enough = p.coarse_enough;
-            h->gmres_sa.reset(new Solver_GMRES_SA(make_A(), sp));
+            auto s = std::make_shared<Solver_BiCGStab_SA>(make_A(), sp);
+            h->solve_fn = [s](Range r, RangeX x) { return (*s)(r, x); };
+            h->print_fn = [s]{ std::cout << s->precond() << std::endl; };
             break;
         }
         case AMGCL_FGMRES_SA: {
@@ -209,63 +144,26 @@ amgcl_solver_t *amgcl_create(int n, const int *row_ptr, const int *col_ind,
             sp.solver.M   = p.gmres_m;
             sp.precond.coarsening.aggr.block_size = p.block_size;
             sp.precond.coarse_enough = p.coarse_enough;
-            h->fgmres_sa.reset(new Solver_FGMRES_SA(make_A(), sp));
-            break;
-        }
-        case AMGCL_CG_RS: {
-            Solver_CG_RS::params sp;
-            sp.solver.tol = p.tolerance; sp.solver.maxiter = p.max_iters;
-            sp.precond.coarse_enough = p.coarse_enough;
-            h->cg_rs.reset(new Solver_CG_RS(make_A(), sp));
-            break;
-        }
-        case AMGCL_BICGSTAB_RS: {
-            Solver_BiCGStab_RS::params sp;
-            sp.solver.tol = p.tolerance; sp.solver.maxiter = p.max_iters;
-            sp.precond.coarse_enough = p.coarse_enough;
-            h->bicgstab_rs.reset(new Solver_BiCGStab_RS(make_A(), sp));
-            break;
-        }
-        case AMGCL_GMRES_RS: {
-            Solver_GMRES_RS::params sp;
-            sp.solver.tol = p.tolerance; sp.solver.maxiter = p.max_iters;
-            sp.solver.M   = p.gmres_m;
-            sp.precond.coarse_enough = p.coarse_enough;
-            h->gmres_rs.reset(new Solver_GMRES_RS(make_A(), sp));
-            break;
-        }
-        case AMGCL_FGMRES_RS: {
-            Solver_FGMRES_RS::params sp;
-            sp.solver.tol = p.tolerance; sp.solver.maxiter = p.max_iters;
-            sp.solver.M   = p.gmres_m;
-            sp.precond.coarse_enough = p.coarse_enough;
-            h->fgmres_rs.reset(new Solver_FGMRES_RS(make_A(), sp));
-            break;
-        }
-        case AMGCL_CG_ILU0: {
-            Solver_CG_ILU0::params sp;
-            sp.solver.tol = p.tolerance; sp.solver.maxiter = p.max_iters;
-            h->cg_ilu0.reset(new Solver_CG_ILU0(make_A(), sp));
+            auto s = std::make_shared<Solver_FGMRES_SA>(make_A(), sp);
+            h->solve_fn = [s](Range r, RangeX x) { return (*s)(r, x); };
+            h->print_fn = [s]{ std::cout << s->precond() << std::endl; };
             break;
         }
         case AMGCL_BICGSTAB_ILU0: {
             Solver_BiCGStab_ILU0::params sp;
             sp.solver.tol = p.tolerance; sp.solver.maxiter = p.max_iters;
-            h->bicgstab_ilu0.reset(new Solver_BiCGStab_ILU0(make_A(), sp));
+            auto s = std::make_shared<Solver_BiCGStab_ILU0>(make_A(), sp);
+            h->solve_fn = [s](Range r, RangeX x) { return (*s)(r, x); };
+            h->print_fn = [s]{ std::cout << s->precond() << std::endl; };
             break;
         }
-        case AMGCL_GMRES_ILU0: {
-            Solver_GMRES_ILU0::params sp;
-            sp.solver.tol = p.tolerance; sp.solver.maxiter = p.max_iters;
-            sp.solver.M   = p.gmres_m;
-            h->gmres_ilu0.reset(new Solver_GMRES_ILU0(make_A(), sp));
-            break;
-        }
-        case AMGCL_FGMRES_ILU0: {
+        case AMGCL_FGMRES_ILUT: {
             Solver_FGMRES_ILU0::params sp;
             sp.solver.tol = p.tolerance; sp.solver.maxiter = p.max_iters;
             sp.solver.M   = p.gmres_m;
-            h->fgmres_ilu0.reset(new Solver_FGMRES_ILU0(make_A(), sp));
+            auto s = std::make_shared<Solver_FGMRES_ILU0>(make_A(), sp);
+            h->solve_fn = [s](Range r, RangeX x) { return (*s)(r, x); };
+            h->print_fn = [s]{ std::cout << s->precond() << std::endl; };
             break;
         }
         default:
@@ -277,57 +175,24 @@ amgcl_solver_t *amgcl_create(int n, const int *row_ptr, const int *col_ind,
         return nullptr;
     }
 
-    if (p.verbose) {
-        switch (p.kind) {
-        case AMGCL_CG_SA:         std::cout << h->cg_sa->precond()         << std::endl; break;
-        case AMGCL_BICGSTAB_SA:   std::cout << h->bicgstab_sa->precond()   << std::endl; break;
-        case AMGCL_GMRES_SA:      std::cout << h->gmres_sa->precond()       << std::endl; break;
-        case AMGCL_FGMRES_SA:     std::cout << h->fgmres_sa->precond()      << std::endl; break;
-        case AMGCL_CG_RS:         std::cout << h->cg_rs->precond()          << std::endl; break;
-        case AMGCL_BICGSTAB_RS:   std::cout << h->bicgstab_rs->precond()    << std::endl; break;
-        case AMGCL_GMRES_RS:      std::cout << h->gmres_rs->precond()        << std::endl; break;
-        case AMGCL_FGMRES_RS:     std::cout << h->fgmres_rs->precond()       << std::endl; break;
-        case AMGCL_CG_ILU0:       std::cout << h->cg_ilu0->precond()        << std::endl; break;
-        case AMGCL_BICGSTAB_ILU0: std::cout << h->bicgstab_ilu0->precond()  << std::endl; break;
-        case AMGCL_GMRES_ILU0:    std::cout << h->gmres_ilu0->precond()      << std::endl; break;
-        case AMGCL_FGMRES_ILU0:   std::cout << h->fgmres_ilu0->precond()     << std::endl; break;
-        default: break;
-        }
-    }
+    if (p.verbose && h->print_fn)
+        h->print_fn();
+
     return h;
 }
-
-#define SOLVE_WITH(field)                                       \
-    if (!h->field) return -1;                                   \
-    std::tie(iters, resid) = (*h->field)(r, X);                 \
-    break;
 
 int amgcl_solve(amgcl_solver_t *h, const double *rhs, double *x,
                 int *out_iters, double *out_residual)
 {
-    if (!h) return -1;
+    if (!h || !h->solve_fn) return -1;
+
     std::size_t iters = 0;
     double      resid = 0.0;
 
     try {
         auto r = amgcl::make_iterator_range(rhs, rhs + h->n);
         auto X = amgcl::make_iterator_range(x,   x   + h->n);
-
-        switch (h->kind) {
-        case AMGCL_CG_SA:         SOLVE_WITH(cg_sa)
-        case AMGCL_BICGSTAB_SA:   SOLVE_WITH(bicgstab_sa)
-        case AMGCL_GMRES_SA:      SOLVE_WITH(gmres_sa)
-        case AMGCL_FGMRES_SA:     SOLVE_WITH(fgmres_sa)
-        case AMGCL_CG_RS:         SOLVE_WITH(cg_rs)
-        case AMGCL_BICGSTAB_RS:   SOLVE_WITH(bicgstab_rs)
-        case AMGCL_GMRES_RS:      SOLVE_WITH(gmres_rs)
-        case AMGCL_FGMRES_RS:     SOLVE_WITH(fgmres_rs)
-        case AMGCL_CG_ILU0:       SOLVE_WITH(cg_ilu0)
-        case AMGCL_BICGSTAB_ILU0: SOLVE_WITH(bicgstab_ilu0)
-        case AMGCL_GMRES_ILU0:    SOLVE_WITH(gmres_ilu0)
-        case AMGCL_FGMRES_ILU0:   SOLVE_WITH(fgmres_ilu0)
-        default: return -1;
-        }
+        std::tie(iters, resid) = h->solve_fn(r, X);
     } catch (...) {
         return -1;
     }
@@ -335,12 +200,9 @@ int amgcl_solve(amgcl_solver_t *h, const double *rhs, double *x,
     if (out_iters)    *out_iters    = static_cast<int>(iters);
     if (out_residual) *out_residual = resid;
     if (h->verbose)
-        printf("amgcl: %d iters  residual = %e  kind = %d\n",
-               static_cast<int>(iters), resid, (int)h->kind);
+        printf("amgcl: %d iters  residual = %e\n", static_cast<int>(iters), resid);
 
     return resid <= h->tolerance ? 0 : 1;
 }
-
-#undef SOLVE_WITH
 
 void amgcl_destroy(amgcl_solver_t *h) { delete h; }

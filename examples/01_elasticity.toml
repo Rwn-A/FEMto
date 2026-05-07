@@ -1,5 +1,6 @@
+# Displacement and stress of a cantilever beam under its own weight
 model = "elasticity"
-sim_name = "ex1"
+sim_name = "cantilever"
 
 [mesh]
 path = "./meshes/cantilever.msh"
@@ -7,10 +8,13 @@ path = "./meshes/cantilever.msh"
 [output]
 directory = "../results"
 
+[solver]
+tolerance = 1e-5 # elasiticty solves are a bit expensive so we lower our expectations
+
 [[material]]
 kind = "builtin:constant_material"
-elastic_modulus = 1e11
-poissons_ratio = 0.3
+elastic_modulus = 2e11
+poissons_ratio = 0.0 # as this approaches 0.5 the solver will struggle more and more.
 density = 7000
 
 [[boundary_condition]]
@@ -20,7 +24,8 @@ displacement = [0, 0, 0]
 
 [[source]]
 kind = "builtin:constant_source"
-body_force = [0, 0, -1000]
+body_force = [0, 0, -77008.5] # ~ specific weight of steel on earth
 
 [fields.displacement]
+# Quadratic order for tetrahedral meshes is common in elasticity.
 order = "Quadratic"

@@ -2,12 +2,12 @@ package linear_elasticity
 
 import "core:fmt"
 import "core:log"
-import "core:mem/virtual"
 import "core:math"
+import "core:mem/virtual"
 
 import "../../fem"
 import "../../fem/infra"
-import fio"../../fem/serialization"
+import fio "../../fem/serialization"
 
 Model_Parameters :: struct {
 	materials:       map[fem.Section_ID]Material_Int,
@@ -57,6 +57,7 @@ Variational_BC :: struct {
 
 Source :: struct {
 	body: []fem.Vec3,
+	initial_strain: []fem.Voigt6,
 }
 
 Material :: struct {
@@ -76,7 +77,7 @@ BC_Int :: union {
 }
 
 @(private = "file")
-empty_source :: proc(n_p: int) -> Source {return {make([]fem.Vec3, n_p)}}
+empty_source :: proc(n_p: int) -> Source {return {make([]fem.Vec3, n_p), make([]fem.Voigt6, n_p)}}
 
 @(private = "file")
 empty_material :: proc(n_p: int) -> Material {
@@ -153,8 +154,9 @@ weak_form :: proc(
 	u_ddot_coeffs := fem.system_gather_var_coeffs(system, U_handle, element.id, u_ddot)
 
 	bd := fem.system_var_bd(system, U_handle)
+	quad_rule := fem.infer_quadrature(bd.order)
 
-	quad := fem.map_quadrature(element, {.Interior, .Quad_3, 0})
+	quad := fem.map_quadrature(element, {.Interior, quad_rule, 0})
 	space := fem.basis_grad_space(quad, bd, .Vector)
 
 	source := empty_source(fem.space_points(space))
@@ -173,6 +175,7 @@ weak_form :: proc(
 	}
 
 	for qp in 0 ..< fem.space_points(space) {
+		C := material.constitutive_tensor[qp]
 		for test in 0 ..< fem.space_arity(space) {
 			residual: f64
 			defer fem.local_system_rhs_add(ls, U_handle, test, residual)
@@ -181,7 +184,8 @@ weak_form :: proc(
 			N_test := fem.space_value(space, qp, test)
 
 			// internal virtual work
-			residual -= fem.dot(B_test, material.stress[qp]) * fem.dV(quad, qp)
+			effective_stress := material.stress[qp] + C * (source.initial_strain[qp])
+			residual -= fem.dot(B_test, effective_stress) * fem.dV(quad, qp)
 
 			// body force
 			residual += fem.dot(N_test, source.body[qp]) * fem.dV(quad, qp)
@@ -195,7 +199,6 @@ weak_form :: proc(
 
 				// stiffness
 
-				C := material.constitutive_tensor[qp]
 				CB_trial := C * B_trial
 
 				jacobian += fem.dot(B_test, CB_trial) * fem.dV(quad, qp)
@@ -211,7 +214,7 @@ weak_form :: proc(
 
 	// variational BCs
 	for facet in element.boundary_facets {
-		quad := fem.map_quadrature(element, {.Surface, fem.infer_quadrature(bd.order), facet})
+		quad := fem.map_quadrature(element, {.Surface, quad_rule, facet})
 		space := fem.basis_grad_space(quad, bd, .Vector)
 
 		u_coeffs := fem.system_gather_var_coeffs(system, U_handle, element.id, u)
@@ -256,10 +259,10 @@ weak_form :: proc(
 
 
 Von_Mises_Data :: struct {
-	system: fem.System,
-	var:    fem.Var_Handle,
-	displacement:   fem.Vector,
-	materials: map[fem.Section_ID]Material_Int,
+	system:       fem.System,
+	var:          fem.Var_Handle,
+	displacement: fem.Vector,
+	materials:    map[fem.Section_ID]Material_Int,
 }
 
 von_mises_output :: proc(data: ^Von_Mises_Data) -> (of: fio.Output_Field) {
@@ -267,7 +270,12 @@ von_mises_output :: proc(data: ^Von_Mises_Data) -> (of: fio.Output_Field) {
 	of.components = 1
 	of.data = data
 
-	of.value_provider = proc(mapped: fem.Mapped_Element, time: f64, data: rawptr, out: [][fio.MAX_OUTPUT_FIELD_COMPONENTS]f64) {
+	of.value_provider = proc(
+		mapped: fem.Mapped_Element,
+		time: f64,
+		data: rawptr,
+		out: [][fio.MAX_OUTPUT_FIELD_COMPONENTS]f64,
+	) {
 		od := cast(^Von_Mises_Data)data
 
 		bd := fem.system_var_bd(od.system, od.var)
@@ -281,12 +289,17 @@ von_mises_output :: proc(data: ^Von_Mises_Data) -> (of: fio.Output_Field) {
 		mat.procedure(mapped, time, strain, mat.data, material)
 
 		for p in 0 ..< fem.space_points(space) {
-		    s := to_engineering_shear(material.stress[p])
-		    sxx, syy, szz := s[0], s[1], s[2]
-		    sxy, syz, sxz := s[3], s[4], s[5]
-		    vm := math.sqrt(0.5 * ((sxx-syy)*(sxx-syy) + (syy-szz)*(syy-szz) + (szz-sxx)*(szz-sxx) +
-		                           6.0 * (sxy*sxy + syz*syz + sxz*sxz)))
-		    out[p][0] = vm
+			s := to_engineering_shear(material.stress[p])
+			sxx, syy, szz := s[0], s[1], s[2]
+			sxy, syz, sxz := s[3], s[4], s[5]
+			vm := math.sqrt(
+				0.5 *
+				((sxx - syy) * (sxx - syy) +
+						(syy - szz) * (syy - szz) +
+						(szz - sxx) * (szz - sxx) +
+						6.0 * (sxy * sxy + syz * syz + sxz * sxz)),
+			)
+			out[p][0] = vm
 		}
 	}
 

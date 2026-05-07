@@ -40,17 +40,19 @@ load_model_config :: proc(
 	builtin_register(&plug_ctx)
 
 	for plugin in schema.plugins{
-		if !cfg.load_plugin(plugin, &plug_ctx ) { return {}, false }
+		// not solving pure conduction so plugins model must be conduction or we skip it.
+		if schema.model != "conduction" && plugin.model != "conduction" {continue}
+		if !cfg.load_plugin(plugin.path, &plug_ctx ) { return {}, false }
 	}
 
-	// load config
+	if len(schema.plugins) > 0 { log.info("Plugins loaded...") }
+
 
 	var, iso := cfg.load_bcs(BC_Int, Isothermal_Int, Variational_Int, schema, gcfg.mesh, plug_ctx.bcs) or_return
 	model_cfg.params.variational_bcs = var
 	model_cfg.params.isothermal_bcs = iso
 	model_cfg.params.materials = cfg.load_material(Material_Int, schema, gcfg.mesh, plug_ctx.materials) or_return
 	model_cfg.params.sources = cfg.load_sources(Source_Int, schema, gcfg.mesh, plug_ctx.sources) or_return
-
 
 	field_schema := struct {
 		order:              fem.Basis_Order,

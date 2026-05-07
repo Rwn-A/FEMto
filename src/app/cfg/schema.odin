@@ -41,10 +41,15 @@ Mesh_Schema :: struct {
 	path: string `validate:"required"`,
 }
 
+Plugin_Schema :: struct {
+	path: string `validate:"required"`,
+	model: string
+}
+
 Schema :: struct {
 	sim_name:     string,
 	model:        string `validate:"required"`,
-	plugins: 	  []string,
+	plugins: 	  []Plugin_Schema,
 	mesh:         Mesh_Schema `validate:"required"`,
 	solver:       Solver_Schema,
 	output:       Output_Schema,
@@ -167,13 +172,10 @@ init_plugin_context :: proc(
 	}
 }
 
+
+// TODO: this requires the OS clenaup the dll at program end, maybe wed rather be explicit.
 load_plugin :: proc(path: string, ctx: ^Plugin_Context($Material, $Source, $BC, $IC)) -> (success:bool) {
     lib, ok := dynlib.load_library(path)
-
-    defer if !dynlib.unload_library(lib){
-		log.error(dynlib.last_error())
-		success = false
-    }
 
     if !ok {
         log.errorf("config: Failed to load plugin at %s", path)
@@ -187,7 +189,9 @@ load_plugin :: proc(path: string, ctx: ^Plugin_Context($Material, $Source, $BC, 
         return false
     }
     register := cast(proc "c" (^Plugin_Context(Material, Source, BC, IC)))register_sym
+
     register(ctx)
+
     return true
 }
 

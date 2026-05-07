@@ -724,14 +724,18 @@ dof_layout :: proc(
 			for cmpnt in 0 ..< components {
 				local_dof := support_idx * components + cmpnt
 
-				for bnd_facet in element.boundary_facets {
-					if support_on_facet(element, support, bnd_facet) {
-						id := element.boundary_ids[bnd_facet]
-						key := Bnd_Key{element_idx, id}
-						if key not_in bnd_dof_builder {bnd_dof_builder[key] = make([dynamic]Local_DOF)}
-						append(&bnd_dof_builder[key], Local_DOF(local_dof))
-					}
+
+				if support.entity_dim < element_dim(element.type) {
+						for bnd_facet in element.boundary_facets {
+							if support_on_facet(element, support, bnd_facet) {
+								id := element.boundary_ids[bnd_facet]
+								key := Bnd_Key{element_idx, id}
+								if key not_in bnd_dof_builder {bnd_dof_builder[key] = make([dynamic]Local_DOF)}
+								append(&bnd_dof_builder[key], Local_DOF(local_dof))
+							}
+						}
 				}
+
 
 				global_dof := &layout.local_to_global[element_idx][local_dof]
 				switch support.entity_dim {

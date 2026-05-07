@@ -1,8 +1,9 @@
+# Steady state condition over a unit square
 model = "conduction"
-sim_name = "ex0"
+sim_name = "hello_world"
 
 [mesh]
-path = "./meshes/cantilever.msh"
+path = "./meshes/2d_square.msh"
 
 [output]
 directory = "../results"
@@ -15,5 +16,10 @@ specific_heat_capacity = 12
 
 [[boundary_condition]]
 kind = "builtin:isothermal"
-boundaries = ["constraint"]
+boundaries = ["left"]
 temperature = 120
+
+[[boundary_condition]]
+kind = "builtin:isothermal"
+boundaries = ["right"]
+temperature = 200

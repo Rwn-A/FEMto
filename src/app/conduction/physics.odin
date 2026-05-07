@@ -146,8 +146,9 @@ weak_form :: proc(
 	u_dot_coeffs := fem.system_gather_var_coeffs(system, T_handle, element.id, u_dot)
 
 	bd := fem.system_var_bd(system, T_handle)
+	quad_rule := fem.infer_quadrature(bd.order)
 
-	quad := fem.map_quadrature(element, {.Interior, .Quad_3, 0})
+	quad := fem.map_quadrature(element, {.Interior, quad_rule, 0})
 	space := fem.basis_grad_space(quad, bd, .Scalar)
 
 	source := empty_source(fem.space_points(space))
@@ -213,7 +214,7 @@ weak_form :: proc(
 
 	// variational bcs.
 	for facet in element.boundary_facets {
-		quad := fem.map_quadrature(element, {.Surface, fem.infer_quadrature(bd.order), facet})
+		quad := fem.map_quadrature(element, {.Surface, quad_rule, facet})
 		space := fem.basis_grad_space(quad, bd, .Scalar)
 
 		u_coeffs := fem.system_gather_var_coeffs(system, T_handle, element.id, u)

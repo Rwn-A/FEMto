@@ -17,30 +17,34 @@ Model_Config :: struct {
 
 SUPPORTED_FAMILIES := bit_set[fem.Basis_Family]{.Lagrange}
 
-Plug_Context :: cfg.Plugin_Context(
-	Material_Int,
-	Source_Int,
-	BC_Int,
-	Initial_Condition_Int,
-)
+Plug_Context :: cfg.Plugin_Context(Material_Int, Source_Int, BC_Int, Initial_Condition_Int)
 
 load_model_config :: proc(
 	schema: cfg.Schema,
 	gcfg: cfg.General_Params,
-	allocator := context.allocator
-) -> (model_cfg: Model_Config, ok: bool) {
+	allocator := context.allocator,
+) -> (
+	model_cfg: Model_Config,
+	ok: bool,
+) {
 	context.allocator = allocator
 
+	if gcfg.mesh.dim != .D3 {
+		log.error("elasticity model is only supported in 3D")
+		return {}, false
+	}
+
 	//load plugins
-	if len(schema.plugins) > 0 { log.info("Loading user plugins...") }
+	if len(schema.plugins) > 0 {log.info("Loading user plugins...")}
 
 	plug_ctx: Plug_Context
 	cfg.init_plugin_context(&plug_ctx)
 
 	builtin_register(&plug_ctx)
 
-	for plugin in schema.plugins{
-		if !cfg.load_plugin(plugin, &plug_ctx ) { return {}, false }
+	for plugin in schema.plugins {
+		if schema.model != "elasticity" && plugin.model != "elasticity" {continue}
+		if !cfg.load_plugin(plugin.path, &plug_ctx) {return {}, false}
 	}
 
 	// load config
@@ -68,7 +72,12 @@ load_model_config :: proc(
 	if exists {
 		cfg.unmarshal(displ_table, &field_schema) or_return
 		cfg.valid_enum_option(SUPPORTED_FAMILIES, field_schema.basis_family) or_return
-		model_cfg.ics = cfg.load_ics(Initial_Condition_Int, field_schema.initial_conditions, gcfg.mesh, plug_ctx.ics) or_return
+		model_cfg.ics = cfg.load_ics(
+			Initial_Condition_Int,
+			field_schema.initial_conditions,
+			gcfg.mesh,
+			plug_ctx.ics,
+		) or_return
 
 	}
 
@@ -78,5 +87,3 @@ load_model_config :: proc(
 
 	return model_cfg, true
 }
-
-
