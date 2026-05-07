@@ -71,7 +71,7 @@ llvm-ar rcs ./.build/amgcl.lib ./.build/amgcl_wrapper.obj
 
 Then build FEMto (add `.exe` to the output name on Windows):
 ```sh
-odin build src/app -out:./.build/femto -o:speed -micro-arch:native
+odin build src/app -out:./.build/femto -o:speed -microarch:native
 ```
 
 And run an example:
@@ -122,6 +122,10 @@ FEMto is split into two layers:
 
 ## Validation
 
+Proper validation work is on going. Linear elasticity matches euler bernoulli for long slender beams and conduction results
+seem reasonable for simple geometries.
+
+
 ## Performance
 
 The two major costs in an FEM simulation are system assembly and sparse linear solving.
@@ -129,10 +133,10 @@ The two major costs in an FEM simulation are system assembly and sparse linear s
 AMGCL handles linear solving and has been fast enough that optimizing its usage hasn't been a
 priority. Though it's already orders of magnitude faster than the previous bespoke implementation.
 
-System assembly is multithreaded, with element reordering to limit contention, but hasn't been
-fully optimized beyond that.
+System assembly is multithreaded, with basic element reordering to reduce contention, but hasn't been
+optimized beyond that.
 
-The codebase is simple, avoids dynamic dispatch, and minimizes system calls, so baseline
+The codebase is simple and avoids expensive operations in hot loops, so baseline
 performance is reasonably good. Planned work includes vectorizing element kernels across batches
 of similar elements to amortize interface overhead and improve arithmetic throughput.
 

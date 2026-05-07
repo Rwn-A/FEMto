@@ -57,7 +57,6 @@ Variational_BC :: struct {
 
 Source :: struct {
 	body: []fem.Vec3,
-	initial_strain: []fem.Voigt6,
 }
 
 Material :: struct {
@@ -77,7 +76,7 @@ BC_Int :: union {
 }
 
 @(private = "file")
-empty_source :: proc(n_p: int) -> Source {return {make([]fem.Vec3, n_p), make([]fem.Voigt6, n_p)}}
+empty_source :: proc(n_p: int) -> Source {return {make([]fem.Vec3, n_p)}}
 
 @(private = "file")
 empty_material :: proc(n_p: int) -> Material {
@@ -184,8 +183,7 @@ weak_form :: proc(
 			N_test := fem.space_value(space, qp, test)
 
 			// internal virtual work
-			effective_stress := material.stress[qp] + C * (source.initial_strain[qp])
-			residual -= fem.dot(B_test, effective_stress) * fem.dV(quad, qp)
+			residual -= fem.dot(B_test, material.stress[qp]) * fem.dV(quad, qp)
 
 			// body force
 			residual += fem.dot(N_test, source.body[qp]) * fem.dV(quad, qp)
