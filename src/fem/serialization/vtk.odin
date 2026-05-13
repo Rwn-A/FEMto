@@ -13,12 +13,7 @@ import fem "../"
 
 MAX_OUTPUT_FIELD_COMPONENTS :: 9
 
-Output_Proc :: #type proc(
-	mapped: fem.Mapped_Element,
-	time: f64,
-	data: rawptr,
-	out: [][MAX_OUTPUT_FIELD_COMPONENTS]f64,
-)
+Output_Proc :: #type proc(mapped: fem.Mapped_Element, time: f64, data: rawptr, out: [][MAX_OUTPUT_FIELD_COMPONENTS]f64)
 
 Output_Field :: struct {
 	friendly_name:  string,
@@ -127,10 +122,7 @@ vtk_create_visualization_mesh :: proc(
 
 		element: fem.Mesh_Element = el
 		element.el = fem.element_reduce_to_linear(element)
-		subcell := fem.map_element(
-			element,
-			&fem.SUBCELL_POINT_RULES[element.type][order],
-		)
+		subcell := fem.map_element(element, &fem.SUBCELL_POINT_RULES[element.type][order])
 		defer fem.mapped_destroy(&subcell)
 
 		for i in 0 ..< len(subcell.rule.points) {
@@ -151,6 +143,14 @@ vtk_create_visualization_mesh :: proc(
 		types = types[:],
 		output_order = order,
 	}
+}
+
+vtk_destroy_visualization_mesh :: proc(mesh: VTK_Raw_Mesh, allocator := context.allocator) {
+	context.allocator = allocator
+	delete(mesh.vertices)
+	delete(mesh.connectivity)
+	delete(mesh.offsets)
+	delete(mesh.types)
 }
 
 // xml-based vtk file specific
@@ -203,6 +203,7 @@ xml_close_tag :: proc(xml_w: ^XML_Writer) {
 }
 
 // vtu specifc
+
 
 write_vtu :: proc(
 	path: string,
@@ -310,10 +311,7 @@ write_vtu :: proc(
 		for el, element_id in mesh.elements {
 			element: fem.Mesh_Element = el
 			element.el = fem.element_reduce_to_linear(element)
-			subcell := fem.map_element(
-				element,
-				&fem.SUBCELL_POINT_RULES[element.type][viz_mesh.output_order],
-			)
+			subcell := fem.map_element(element, &fem.SUBCELL_POINT_RULES[element.type][viz_mesh.output_order])
 			defer fem.mapped_destroy(&subcell)
 
 

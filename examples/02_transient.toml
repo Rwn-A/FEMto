@@ -14,23 +14,27 @@ start = 0
 end = 5
 timestep = 0.5
 
-[[material]]
+[[materials.conduction]]
 kind = "builtin:constant_material"
 density = 7
 conductivity = 10
 specific_heat_capacity = 12
 
-[[boundary_condition]]
+[[boundaries.conduction]]
 kind = "builtin:isothermal"
 boundaries = ["left"]
 temperature = 120
 
-[[boundary_condition]]
+[[boundaries.conduction]]
 kind = "builtin:isothermal"
 boundaries = ["right"]
 temperature = 200
 
-[[fields.temperature.initial_conditions]]
+[[initial_conditions.conduction]]
 kind = "builtin:constant_ic"
 temperature = 50
+
+[[sources.conduction]]
+kind = "builtin:constant_source"
+heat = -1000
 

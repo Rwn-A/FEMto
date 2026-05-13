@@ -3,7 +3,7 @@ package fem
 import "core:mem"
 import "core:slice"
 
-import "base:intrinsics"
+// TODO: this file has become a bit of a catch all for alot of different things.
 
 import "./infra"
 
@@ -69,8 +69,9 @@ Thread_Partition :: struct {
 
 Thread_Partitions :: struct {
 	partitions: []^Thread_Partition,
-	allocator:  mem.Allocator,
+	allocator:  mem.Allocator, // used for the orphan arrays, doesnt need to be the allocator used by the user code.
 }
+
 
 // ----------------------
 // Local assembly context
@@ -726,14 +727,14 @@ dof_layout :: proc(
 
 
 				if support.entity_dim < element_dim(element.type) {
-						for bnd_facet in element.boundary_facets {
-							if support_on_facet(element, support, bnd_facet) {
-								id := element.boundary_ids[bnd_facet]
-								key := Bnd_Key{element_idx, id}
-								if key not_in bnd_dof_builder {bnd_dof_builder[key] = make([dynamic]Local_DOF)}
-								append(&bnd_dof_builder[key], Local_DOF(local_dof))
-							}
+					for bnd_facet in element.boundary_facets {
+						if support_on_facet(element, support, bnd_facet) {
+							id := element.boundary_ids[bnd_facet]
+							key := Bnd_Key{element_idx, id}
+							if key not_in bnd_dof_builder {bnd_dof_builder[key] = make([dynamic]Local_DOF)}
+							append(&bnd_dof_builder[key], Local_DOF(local_dof))
 						}
+					}
 				}
 
 

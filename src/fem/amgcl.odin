@@ -34,7 +34,7 @@ Params :: struct {
 foreign amgcl_lib {
 	params_default :: proc(p: ^Params) ---
 	create :: proc(n: c.int, row_ptr, col_ind: [^]c.int, values: [^]f64, p: ^Params) -> Solver ---
-	solve  :: proc(s: Solver, rhs, x: [^]f64, out_iters: ^c.int, out_residual: ^f64) -> c.int ---
+	solve :: proc(s: Solver, rhs, x: [^]f64, out_iters: ^c.int, out_residual: ^f64) -> c.int ---
 	destroy :: proc(s: Solver) ---
 }
 
@@ -48,7 +48,7 @@ Solver_Options :: struct {
 	verbose:       bool,
 }
 
-DEFAULT_SOLVER_OPTIONS :: Solver_Options{
+DEFAULT_SOLVER_OPTIONS :: Solver_Options {
 	kind          = .FGMRES_SA,
 	tol           = 1e-8,
 	max_iters     = 500,
@@ -67,13 +67,13 @@ create_solver :: proc(
 ) -> Solver {
 	p: Params
 	params_default(&p)
-	p.kind         = opts.kind
-	p.tolerance    = opts.tol
-	p.max_iters    = c.int(opts.max_iters)
-	p.gmres_m      = c.int(opts.gmres_m)
+	p.kind = opts.kind
+	p.tolerance = opts.tol
+	p.max_iters = c.int(opts.max_iters)
+	p.gmres_m = c.int(opts.gmres_m)
 	p.coarse_enough = c.int(opts.coarse_enough)
-	p.block_size   = c.int(opts.block_size)
-	p.verbose      = 1 if opts.verbose else 0
+	p.block_size = c.int(opts.block_size)
+	p.verbose = 1 if opts.verbose else 0
 	return create(c.int(n), raw_data(row_ptr), raw_data(col_ind), raw_data(values), &p)
 }
 
@@ -95,7 +95,10 @@ sparse_solve :: proc(
 	A: Sparse_Matrix,
 	x, b: Vector,
 	opts: Solver_Options = DEFAULT_SOLVER_OPTIONS,
-) -> (r: Solve_Result, ok: bool) {
+) -> (
+	r: Solve_Result,
+	ok: bool,
+) {
 	s := create_solver(sparse_matrix_rows(A), A.row_ptrs, A.columns, A.values, opts)
 	if s == nil {
 		log.error("amgcl: solver creation failed")

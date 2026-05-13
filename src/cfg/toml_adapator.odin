@@ -16,7 +16,7 @@
 ```
 
 NOTES:
-- Strings are cloned by the unmarshaller.
+- Strings are cloned by the unmarshaller, while ^Table and ^Lists are not.
 - The range validation (lt, lte, gt, gte) can only be applied to integers, floats and arrays of them.
 - Invalid ranges are not dected.  (ex. lte=10,gte=12)
 
@@ -27,18 +27,18 @@ import "base:intrinsics"
 import "core:fmt"
 import "core:log"
 import "core:mem"
-import "core:mem/virtual"
 import "core:reflect"
 import "core:strconv"
 import "core:strings"
-import "core:testing"
 
-import "../../../vendor/toml"
+import "../../vendor/toml"
 
 // In the case other code interacts with these toml layer doesnt leak.
 Table :: toml.Table
 List :: toml.List
 Type :: toml.Type
+parse :: toml.parse
+format_error :: toml.format_error
 
 // Typechecks and retrieves the value specified by `path`.
 // Logs an error and return false if not found.
@@ -49,7 +49,7 @@ table_get :: proc($T: typeid, section: ^Table, path: ..string) -> (T, bool) {
 }
 
 // Typechecks and retrieves the value specified by `path`, returns false is the value doesnt exist
-// this function still logs an error if the value exists, but does not match the expected type.
+// this function still logs an error if the value exists but does not match the expected type.
 table_get_opt :: proc($T: typeid, section: ^Table, path: ..string) -> (T, bool) {
 	context.allocator = context.temp_allocator
 	return table_get_raw(T, section, true, ..path)
@@ -62,7 +62,7 @@ table_get_opt :: proc($T: typeid, section: ^Table, path: ..string) -> (T, bool) 
 // Error messages are automatically logged, the returned boolean indicates if this happened.
 // If the schema struct has fields that cannot be unmarshalled an assert will be triggered.
 unmarshal :: proc(table: ^Table, ptr: ^$T, allocator := context.allocator) -> bool where intrinsics.type_is_struct(T) {
-	assert(table != nil, "config: unmarshal called with nil table")
+	assert(table != nil, fmt.aprintf("unmarshal called with nil table %T", ptr^))
 	context.allocator = allocator
 	return unmarshal_table(any{data = ptr, id = typeid_of(T)}, table, fmt.aprintf("%T", ptr^))
 }
@@ -201,7 +201,7 @@ numeric_as_f64 :: proc(value: toml.Type) -> (f64, bool) {
 	}
 }
 
-@(private = "file")
+@(private)
 unmarshal_value :: proc(dest: any, value: toml.Type, path: string, vd: Validator) -> bool {
 	ti := reflect.type_info_base(type_info_of(dest.id))
 
@@ -286,6 +286,7 @@ unmarshal_value :: proc(dest: any, value: toml.Type, path: string, vd: Validator
 				false,
 				"config: unsupported pointer type — only ^Table and ^List are allowed; use value types for nested structs",
 			)
+
 		}
 	case:
 		assert(false, "config: unsupported field type in schema")

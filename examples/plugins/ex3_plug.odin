@@ -9,14 +9,15 @@ import "core:fmt"
 import "../../src/app/cfg"
 import "../../src/fem"
 import "../../src/app/conduction"
+import "../../src/app/linear_elasticity"
 
 @(export)
-register :: proc "c" (ctx: ^conduction.Plug_Context) {
-    ctx.sources["my_plug:custom_source"] = custom_source
+register :: proc "c" (reg: ^cfg.Plugin_Registry) {
+    reg["my_plug:custom_source"] = custom_source
 }
 
 
-custom_source :: proc(tbl: ^cfg.Table) -> (source: conduction.Source_Int, ok: bool) {
+custom_source :: proc(tbl: ^cfg.Table,  ctx: cfg.Plugin_Context) -> (ok: bool) {
     Plug_Schema :: struct {
         frequency: f64 `validate:"required,gt=0"`,
         amplitude: f64 `validate:"required"`,
@@ -33,6 +34,8 @@ custom_source :: proc(tbl: ^cfg.Table) -> (source: conduction.Source_Int, ok: bo
     s: Plug_Schema
     cfg.unmarshal(tbl, &s) or_return
 
+    source: conduction.Source_Int
+
     data := new(Plug_Params)
     data.angular_frequency = s.frequency * 2 * math.PI
     data.amplitude = s.amplitude
@@ -43,5 +46,8 @@ custom_source :: proc(tbl: ^cfg.Table) -> (source: conduction.Source_Int, ok: bo
         // always += because multiple sources might be active.
         for &Q in out.Q { Q += info.amplitude * math.sin(info.angular_frequency * time) }
     }
-    return source, true
+
+    conduction.add_source(ctx, source)
+
+    return true
 }

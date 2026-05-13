@@ -13,7 +13,7 @@ A finite element solver written in Odin.
 
 ## Overview
 
-FEMto solves partial differential equations for common physics problems. Right now that means heat conduction and small-strain elasticity (3D).
+FEMto solves partial differential equations for common physics problems. Right now that means heat conduction, small-strain elasticity (3D).
 Time-dependent problems are supported, along with nonlinear and spatially varying material models,
 source terms and boundaries.
 
@@ -71,7 +71,7 @@ llvm-ar rcs ./.build/amgcl.lib ./.build/amgcl_wrapper.obj
 
 Then build FEMto (add `.exe` to the output name on Windows):
 ```sh
-odin build src/app -out:./.build/femto -o:speed -microarch:native
+odin build src -out:./.build/femto -o:speed -microarch:native
 ```
 
 And run an example:
@@ -90,16 +90,15 @@ The most basic configuration is shown below:
 ```toml
 model = "conduction"
 
-[mesh]
-path = "./meshes/2d_square.msh" # all paths are relative to the config file
+mesh.path = "./meshes/2d_square.msh" # all paths are relative to the config file
 
-[[material]]
+[[materials.conduction]]
 kind = "builtin:constant_material"
 density = 7
 conductivity = 10
 specific_heat_capacity = 12
 
-[[boundary_condition]]
+[[boundaries.conduction]]
 kind = "builtin:isothermal"
 boundaries = ["left"] # these are boundary names from the mesh we want to apply the boundary to.
 temperature = 120
@@ -109,7 +108,7 @@ temperature = 120
 ### Plugins
 Plugins are still early, but can be used for extending models without recompiling FEMto itself.
 
-Examples live in `examples/plugins`, and the built-in models work in a similar fashion under `src/app/*/builtin.odin`.
+Examples live in `examples/plugins`, and the built-in models work in a similar fashion under `src/models/*/builtin.odin`.
 
 A plugin defines functions that take config data and return implementations used by a model.
 
@@ -117,7 +116,7 @@ A plugin defines functions that take config data and return implementations used
 FEMto is split into two layers:
 
 - `src/fem`: core FEM primitives, designed to be used independently of `app` if needed.
-- `src/app`: application layer (config, physics models, glue)
+- `src/*`: everything else is application code, physics models, config etc.
 
 
 ## Validation

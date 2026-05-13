@@ -8,18 +8,18 @@ path = "./meshes/2d_square.msh"
 [output]
 directory = "../results"
 
-[[material]]
+[[materials.conduction]]
 kind = "builtin:constant_material"
 density = 7
 conductivity = 10
 specific_heat_capacity = 12
 
-[[boundary_condition]]
+[[boundaries.conduction]]
 kind = "builtin:isothermal"
 boundaries = ["left"]
 temperature = 120
 
-[[boundary_condition]]
+[[boundaries.conduction]]
 kind = "builtin:isothermal"
 boundaries = ["right"]
-temperature = 200
+temperature = 400
