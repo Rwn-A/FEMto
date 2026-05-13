@@ -2,6 +2,7 @@ package fem
 
 import "core:mem"
 import "core:slice"
+import "core:log"
 
 // TODO: this file has become a bit of a catch all for alot of different things.
 
@@ -283,6 +284,7 @@ evaluate_var :: proc {
 
 evaluate_var_gradient :: proc {
 	evaluate_scalar_var_gradient,
+		evaluate_vector_var_gradient,
 }
 
 @(private)
@@ -325,6 +327,15 @@ evaluate_scalar_var_gradient :: proc(
 	allocator := context.allocator,
 ) -> []Vec3 {
 	return evaluate_var_gradient_generic(Vec3, space, mapping, coeffs, allocator)
+}
+
+evaluate_vector_var_gradient :: proc(
+	space: Grad_Space(.Vector),
+	mapping: Mapped_Element,
+	coeffs: []f64,
+	allocator := context.allocator,
+) -> []Mat3 {
+	return evaluate_var_gradient_generic(Mat3, space, mapping, coeffs, allocator)
 }
 
 system_var_bd :: proc(sys: System, var: Var_Handle) -> Basis_Descriptor {

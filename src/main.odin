@@ -10,6 +10,7 @@ import "cfg"
 import "fem/infra"
 import "models/conduction"
 import "models/small_strain"
+import "models/inc_flow"
 
 main :: proc() {
     context.logger = log.create_console_logger()
@@ -56,11 +57,9 @@ run :: proc() -> bool {
         case "small_strain":
             ssd := small_strain.configure_driver(mesh, &out_h, &plugins, schema) or_return
             small_strain.drive(ssd, mesh, &prt)
-        case "thermo_mechanical":
-            // load config consituents into each plug_ctx (for mat, bcs, sources)
-            // laod material into unified plug ctx
-            // that is passed to thermo elastic preamble
-            // rest of config passed to thermo elastic driver
+        case "inc_flow":
+            driver := inc_flow.configure_driver(mesh, &out_h, &plugins, schema) or_return
+            inc_flow.drive(driver, mesh, &prt)
         case:
             log.errorf("Unknown model %s", schema.model); return false
     }

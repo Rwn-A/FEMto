@@ -319,6 +319,7 @@ write_vtu :: proc(
 			defer delete(out)
 
 			for field, i in fields {
+				mem.zero_slice(out)
 				field.value_provider(subcell, time, field.data, out)
 				for &point in out {
 					append(&point_data[i], ..(point[:field.components]))
