@@ -52,114 +52,221 @@ empty_problem_data :: proc(mesh: fem.Mesh, allocator := context.allocator) -> (d
 }
 
 
+// assemble_bulk :: proc(
+// 	ls:           fem.Local_System,
+// 	V_handle:     fem.Var_Handle,
+// 	P_handle:     fem.Var_Handle,
+// 	V_space:      fem.Grad_Space(.Vector),
+// 	P_space:       fem.Grad_Space(.Scalar),
+// 	quad:         fem.Mapped_Element,
+// 	ts:           fem.Timestep,
+// 	bulk:         Bulk_Response,
+// ) {
+
+//     dimension: f64 = 3
+//     stabilization_param: f64 = 4
+
+//     element_volume: f64
+//     for qp in 0 ..< fem.space_points(P_space) {
+//         element_volume += fem.dV(quad, qp)
+//     }
+
+// 	for qp in 0 ..< fem.space_points(P_space) {
+// 	   density := bulk.material.density[qp]
+// 	   viscosity := bulk.material.dynamic_viscosity[qp]
+// 	    h_e := math.pow(element_volume, 1.0 / dimension)
+//         vel_norm := max(linalg.length(bulk.velocity[qp]), 1e-8)
+
+//         time_term := 4 / math.pow(ts.dt, 2) if ts.dt != 0  else 0
+//         tau := 1.0 / math.sqrt(
+//              time_term +
+//             math.pow(2.0 * vel_norm / h_e, 2) +
+//             math.pow(stabilization_param * viscosity / (h_e * h_e), 2)
+//         )
+
+// 		for test in 0 ..< fem.space_arity(V_space) {
+//             residual: f64
+//             defer fem.local_system_rhs_add(ls, V_handle, test, residual)
+
+//             w := fem.space_value(V_space, qp, test)
+//             grad_w := fem.space_gradient(V_space, quad, qp, test)
+
+// 			for trial in 0 ..< fem.space_arity(V_space) {
+// 			    jacobian: f64
+// 				defer fem.local_system_mat_add(ls, V_handle, test, V_handle, trial, jacobian)
+
+//                 u := fem.space_value(V_space, qp, trial)
+//                 grad_u := fem.space_gradient(V_space, quad, qp, trial)
+
+//                 convection_ij := density * fem.dot(grad_u * bulk.velocity[qp], w) * fem.dV(quad, qp)
+//                 diffusion_ij := viscosity * fem.frob(grad_u, grad_w) * fem.dV(quad, qp)
+
+//                 residual +=  (convection_ij + diffusion_ij) * bulk.v_coeffs[trial]
+//                 jacobian += convection_ij + diffusion_ij
+
+//                 deriv_ij := density * fem.dot(u, w) * fem.dV(quad, qp)
+
+//                 // residual += deriv_ij * V_dot_coeffs[trial]
+//                 // jacobian += deriv_ij * du_udot
+// 			}
+
+//             for trial in 0 ..< fem.space_arity(P_space) {
+//                 jacobian: f64
+// 				defer fem.local_system_mat_add(ls, V_handle, test, P_handle, trial, jacobian)
+
+//                 p := fem.space_value(P_space, qp, trial)
+// 				P_V_coupling_ij := -p * linalg.trace(grad_w) * fem.dV(quad, qp)
+
+//                 residual += P_V_coupling_ij * bulk.p_coeffs[trial]
+//                 jacobian += P_V_coupling_ij
+// 			}
+
+//             // chat wrote the new coe for tau, no clue if that's correct
+
+//             r_supg := density * bulk.grad_v[qp] * bulk.velocity[qp] + bulk.grad_p[qp]
+//             SUPG_stabilization := tau * fem.dot( grad_w * bulk.velocity[qp], r_supg) * fem.dV(quad, qp)
+//             residual += SUPG_stabilization
+// 		}
+
+//         for test in 0 ..< fem.space_arity(P_space) { // for u,q
+//             residual: f64
+// 			defer fem.local_system_rhs_add(ls, P_handle, test, residual)
+
+//             q := fem.space_value(P_space, qp, test)
+//             grad_q := fem.space_gradient(P_space, quad, qp, test)
+
+// 			for trial in 0 ..< fem.space_arity(V_space) {
+//                 jacobian: f64
+// 				defer fem.local_system_mat_add(ls, P_handle, test, V_handle, trial, jacobian)
+
+//                 grad_u := fem.space_gradient(V_space, quad, qp, trial)
+
+// 				continuity_ij := q * linalg.trace(grad_u) * fem.dV(quad, qp)
+
+//                 pspg_ij := density * tau * linalg.dot(grad_q, grad_u * bulk.velocity[qp]) * fem.dV(quad, qp)
+
+//                 residual += (continuity_ij + pspg_ij) * bulk.p_coeffs[test]
+//                 jacobian += continuity_ij + pspg_ij
+// 			}
+
+//             for trial in 0 ..< fem.space_arity(P_space) {
+//                 jacobian: f64
+// 				defer fem.local_system_mat_add(ls, P_handle, test, P_handle, trial, jacobian)
+
+//                 grad_p := fem.space_gradient(P_space, quad, qp, trial)
+
+//                 pspg_ij := density * tau * linalg.dot(grad_q, grad_p) * fem.dV(quad, qp)
+
+//                 residual += pspg_ij * bulk.p_coeffs[trial]
+//                 jacobian += pspg_ij
+// 			}
+// 		}
+// 	}
+// }
+
 assemble_bulk :: proc(
-	ls:           fem.Local_System,
-	V_handle:     fem.Var_Handle,
-	P_handle:     fem.Var_Handle,
-	V_space:      fem.Grad_Space(.Vector),
-	P_space:       fem.Grad_Space(.Scalar),
-	quad:         fem.Mapped_Element,
+	ls:       fem.Local_System,
+	V_handle: fem.Var_Handle,
+	P_handle: fem.Var_Handle,
+	V_space:  fem.Grad_Space(.Vector),
+	P_space:  fem.Grad_Space(.Scalar),
+	quad:     fem.Mapped_Element,
 	ts:           fem.Timestep,
-	bulk:         Bulk_Response,
+	bulk:     Bulk_Response,
 ) {
-
-    dimension: f64 = 3
-    stabilization_param: f64 = 4
-
-    element_volume: f64
-    for qp in 0 ..< fem.space_points(P_space) {
-        element_volume += fem.dV(quad, qp)
-    }
+	dimension:           f64 = 3
+	stabilization_param: f64 = 4
+	
+	element_volume:      f64
+	for qp in 0 ..< fem.space_points(P_space) {
+		element_volume += fem.dV(quad, qp)
+	}
 
 	for qp in 0 ..< fem.space_points(P_space) {
-	   density := bulk.material.density[qp]
-	   viscosity := bulk.material.dynamic_viscosity[qp]
-	    h_e := math.pow(element_volume, 1.0 / dimension)
-        vel_norm := max(linalg.length(bulk.velocity[qp]), 1e-8)
+		density   := bulk.material.density[qp]
+		viscosity := bulk.material.dynamic_viscosity[qp]
 
-        time_term := 4 / math.pow(ts.dt, 2) if ts.dt != 0  else 0
-        tau := 1.0 / math.sqrt(
-             time_term +
-            math.pow(2.0 * vel_norm / h_e, 2) +
-            math.pow(stabilization_param * viscosity / (h_e * h_e), 2)
+        h_e      := math.pow(element_volume, 1.0 / dimension)
+        vel_norm := max(linalg.length(bulk.velocity[qp]), 1e-8)
+        tau      := 1.0 / math.sqrt(
+        	math.pow(2.0 * vel_norm / h_e, 2) +
+        	math.pow(stabilization_param * viscosity / (density * h_e * h_e), 2),
         )
 
-		for test in 0 ..< fem.space_arity(V_space) {
-            residual: f64
-            defer fem.local_system_rhs_add(ls, V_handle, test, residual)
+		r_supg := density * bulk.grad_v[qp] * bulk.velocity[qp] + bulk.grad_p[qp]
 
-            w := fem.space_value(V_space, qp, test)
-            grad_w := fem.space_gradient(V_space, quad, qp, test)
+		for test in 0 ..< fem.space_arity(V_space) {
+			residual: f64
+			defer fem.local_system_rhs_add(ls, V_handle, test, residual)
+
+			w      := fem.space_value(V_space, qp, test)
+			grad_w := fem.space_gradient(V_space, quad, qp, test)
 
 			for trial in 0 ..< fem.space_arity(V_space) {
-			    jacobian: f64
+				jacobian: f64
 				defer fem.local_system_mat_add(ls, V_handle, test, V_handle, trial, jacobian)
 
-                u := fem.space_value(V_space, qp, trial)
-                grad_u := fem.space_gradient(V_space, quad, qp, trial)
+				grad_u := fem.space_gradient(V_space, quad, qp, trial)
 
-                convection_ij := density * fem.dot(grad_u * bulk.velocity[qp], w) * fem.dV(quad, qp)
-                diffusion_ij := viscosity * fem.frob(grad_u, grad_w) * fem.dV(quad, qp)
+				convection_ij := density   * fem.dot(grad_u * bulk.velocity[qp], w) * fem.dV(quad, qp)
+				diffusion_ij  := viscosity * fem.frob(grad_u, grad_w)               * fem.dV(quad, qp)
 
-                residual +=  (convection_ij + diffusion_ij) * bulk.v_coeffs[trial]
-                jacobian += convection_ij + diffusion_ij
+				residual -= (convection_ij + diffusion_ij) * bulk.v_coeffs[trial]
+				jacobian +=  convection_ij + diffusion_ij
 
-                deriv_ij := density * fem.dot(u, w) * fem.dV(quad, qp)
-
-                // residual += deriv_ij * V_dot_coeffs[trial]
-                // jacobian += deriv_ij * du_udot
+				jacobian += tau * density * fem.dot(grad_w * bulk.velocity[qp], grad_u * bulk.velocity[qp]) * fem.dV(quad, qp)
 			}
 
-            for trial in 0 ..< fem.space_arity(P_space) {
-                jacobian: f64
+			for trial in 0 ..< fem.space_arity(P_space) {
+				jacobian: f64
 				defer fem.local_system_mat_add(ls, V_handle, test, P_handle, trial, jacobian)
 
-                p := fem.space_value(P_space, qp, trial)
+				p      := fem.space_value(P_space, qp, trial)
+				grad_p := fem.space_gradient(P_space, quad, qp, trial)
+
 				P_V_coupling_ij := -p * linalg.trace(grad_w) * fem.dV(quad, qp)
 
-                residual += P_V_coupling_ij * bulk.p_coeffs[trial]
-                jacobian += P_V_coupling_ij
+				residual -= P_V_coupling_ij * bulk.p_coeffs[trial]
+				jacobian += P_V_coupling_ij
+
+				jacobian += tau * fem.dot(grad_w * bulk.velocity[qp], grad_p) * fem.dV(quad, qp)
 			}
-
-            // chat wrote the new coe for tau, no clue if that's correct
-
-            r_supg := density * bulk.grad_v[qp] * bulk.velocity[qp] + bulk.grad_p[qp]
-            SUPG_stabilization := tau * fem.dot( grad_w * bulk.velocity[qp], r_supg) * fem.dV(quad, qp)
-            residual += SUPG_stabilization
+			residual -= tau * fem.dot(grad_w * bulk.velocity[qp], r_supg) * fem.dV(quad, qp)
 		}
 
-        for test in 0 ..< fem.space_arity(P_space) { // for u,q
-            residual: f64
+		for test in 0 ..< fem.space_arity(P_space) {
+			residual: f64
 			defer fem.local_system_rhs_add(ls, P_handle, test, residual)
 
-            q := fem.space_value(P_space, qp, test)
-            grad_q := fem.space_gradient(P_space, quad, qp, test)
+			q      := fem.space_value(P_space, qp, test)
+			grad_q := fem.space_gradient(P_space, quad, qp, test)
 
 			for trial in 0 ..< fem.space_arity(V_space) {
-                jacobian: f64
+				jacobian: f64
 				defer fem.local_system_mat_add(ls, P_handle, test, V_handle, trial, jacobian)
 
-                grad_u := fem.space_gradient(V_space, quad, qp, trial)
+				grad_u := fem.space_gradient(V_space, quad, qp, trial)
 
-				continuity_ij := q * linalg.trace(grad_u) * fem.dV(quad, qp)
+				continuity_ij := q   * linalg.trace(grad_u)                              * fem.dV(quad, qp)
+				pspg_ij       := tau * linalg.dot(grad_q, grad_u * bulk.velocity[qp])    * fem.dV(quad, qp)
 
-                pspg_ij := density * tau * linalg.dot(grad_q, grad_u * bulk.velocity[qp]) * fem.dV(quad, qp)
 
-                residual += (continuity_ij + pspg_ij) * bulk.p_coeffs[test]
-                jacobian += continuity_ij + pspg_ij
+				residual -= (continuity_ij + pspg_ij) * bulk.v_coeffs[trial]
+				jacobian += continuity_ij + pspg_ij
 			}
 
-            for trial in 0 ..< fem.space_arity(P_space) {
-                jacobian: f64
+			for trial in 0 ..< fem.space_arity(P_space) {
+				jacobian: f64
 				defer fem.local_system_mat_add(ls, P_handle, test, P_handle, trial, jacobian)
 
-                grad_p := fem.space_gradient(P_space, quad, qp, trial)
+				grad_p  := fem.space_gradient(P_space, quad, qp, trial)
+				pspg_ij := (tau / density) * linalg.dot(grad_q, grad_p) * fem.dV(quad, qp)
 
-                pspg_ij := density * tau * linalg.dot(grad_q, grad_p) * fem.dV(quad, qp)
-
-                residual += pspg_ij * bulk.p_coeffs[trial]
-                jacobian += pspg_ij
+				residual -= pspg_ij * bulk.p_coeffs[trial]
+				jacobian += pspg_ij
 			}
+
+			residual -= (tau / density) * linalg.dot(grad_q, r_supg) * fem.dV(quad, qp)
 		}
 	}
 }

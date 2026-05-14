@@ -65,7 +65,7 @@ configure_driver :: proc(mesh: fem.Mesh, out_h: ^cfg.Output_Handler, plugins: ^c
 
 	if tc := schema.time_control; tc != {}{
 	    cd.ts = fem.timestepper_create(tc.start, tc.end, tc.timestep)
-	    time_scheme := cfg.load_time_scheme(SUPPORTED_TIME_SCHEMES, .Newmark, tc.scheme) or_return
+	    time_scheme := cfg.load_time_scheme(SUPPORTED_TIME_SCHEMES, .BDF2, tc.scheme) or_return
 		fem.timestepper_set_scheme(&cd.ts, cd.v_handle, time_scheme)
 	} else{
 	   cd.ts = fem.timestepper_create_steady()
@@ -186,6 +186,7 @@ drive :: proc(cd: Inc_Flow_Driver, mesh: fem.Mesh, prt: ^infra.Parallel_Runtime,
         	infra.ca_check(&ca); defer infra.ca_rewind(&ca)
         	if should_solve {
 				fem.sparse_solve(ad.tangent, ad.update, ad.residual, cd.solver_options)
+				fem.scal(ad.update, 0.4)
 				fem.nli_do_update(cd.solution, ad.tangent, residual = ad.residual, update = ad.update)
 			}
 
@@ -199,7 +200,7 @@ drive :: proc(cd: Inc_Flow_Driver, mesh: fem.Mesh, prt: ^infra.Parallel_Runtime,
 		}
 
 		if fem.nli_reached_max(ni) {
-			log.errorf("Non linear system did not converge to a result in %d iterations.", ni.current_iter)
+			log.errorf("Non linear system did not converge to a result in %d iterations.", ni.current_iter - 2)
 			//return false
 		}
 

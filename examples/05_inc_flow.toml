@@ -1,0 +1,30 @@
+model = "inc_flow"
+sim_name = "flow"
+
+[mesh]
+path = "./meshes/3d_rect.msh"
+
+[solver]
+max_nonlinear_iters = 10
+tolerance = 1e-4
+
+[output]
+directory = "../results"
+
+[[materials.momentum]]
+kind = "builtin:constant_material"
+density = 1e3
+viscosity = 1e-3
+
+[[boundaries.momentum]]
+kind = "builtin:no_slip"
+boundaries = ["bottom", "back", "front", "top"]
+
+[[boundaries.momentum]]
+kind = "builtin:outflow"
+boundaries = ["end_right"]
+
+[[boundaries.momentum]]
+kind = "builtin:inflow"
+boundaries = ["end_left"]
+velocity = [0.2, 0, 0]
